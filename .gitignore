@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Pipeline results (may contain PII)
+*_results.json
+pipeline_*.json
+*_output.md
+
+# User data
+*.db
+*.sqlite
+profile.yaml
+config.json
+
+# Build artifacts
+*.dmg
+*.zip
+
+# OS
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
