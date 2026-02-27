@@ -1,4 +1,4 @@
-"""Tests for Loom ambient adapters: KnowledgeC, Safari, Chrome, Notes, Shell History.
+"""Tests for Alteris ambient adapters: KnowledgeC, Safari, Chrome, Notes, Shell History.
 
 All tests use synthetic in-memory SQLite databases or temp files. No real databases.
 Monkeypatching overrides path constants so adapters read from controlled test data.
@@ -11,17 +11,17 @@ from pathlib import Path
 
 import pytest
 
-from loom.adapters.knowledgec import KnowledgeCAdapter
-from loom.adapters.safari import SafariAdapter
-from loom.adapters.chrome import ChromiumAdapter, get_chromium_adapters, TRANSITION_TYPES
-from loom.adapters.notes import NotesAdapter, _extract_note_text
-from loom.adapters.shell_history import (
+from alteris.adapters.knowledgec import KnowledgeCAdapter
+from alteris.adapters.safari import SafariAdapter
+from alteris.adapters.chrome import ChromiumAdapter, get_chromium_adapters, TRANSITION_TYPES
+from alteris.adapters.notes import NotesAdapter, _extract_note_text
+from alteris.adapters.shell_history import (
     ShellHistoryAdapter,
     _sanitize_command,
     _parse_zsh_history,
 )
-from loom.constants import APPLE_EPOCH_OFFSET, CHROME_EPOCH_OFFSET
-from loom.models import Event
+from alteris.constants import APPLE_EPOCH_OFFSET, CHROME_EPOCH_OFFSET
+from alteris.models import Event
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -174,13 +174,13 @@ class TestKnowledgeCAdapter:
     def test_check_availability_present(self, tmp_path, monkeypatch):
         db_path = tmp_path / "knowledgeC.db"
         _create_knowledgec_db(db_path)
-        monkeypatch.setattr("loom.adapters.knowledgec.KNOWLEDGEC_DB", db_path)
+        monkeypatch.setattr("alteris.adapters.knowledgec.KNOWLEDGEC_DB", db_path)
         adapter = KnowledgeCAdapter()
         result = adapter.check_availability()
         assert result.available is True
 
     def test_check_availability_missing(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("loom.adapters.knowledgec.KNOWLEDGEC_DB", tmp_path / "nonexistent.db")
+        monkeypatch.setattr("alteris.adapters.knowledgec.KNOWLEDGEC_DB", tmp_path / "nonexistent.db")
         adapter = KnowledgeCAdapter()
         result = adapter.check_availability()
         assert result.available is False
@@ -192,7 +192,7 @@ class TestKnowledgeCAdapter:
         conn = sqlite3.connect(str(db_path))
         conn.execute("CREATE TABLE OTHER (id INTEGER)")
         conn.close()
-        monkeypatch.setattr("loom.adapters.knowledgec.KNOWLEDGEC_DB", db_path)
+        monkeypatch.setattr("alteris.adapters.knowledgec.KNOWLEDGEC_DB", db_path)
         adapter = KnowledgeCAdapter()
         result = adapter.check_schema()
         assert result.compatible is False
@@ -206,7 +206,7 @@ class TestKnowledgeCAdapter:
             {"z_pk": 1, "bundle": "com.apple.Safari", "start": now_apple, "end": now_apple + 120},
             {"z_pk": 2, "bundle": "com.apple.Mail", "start": now_apple + 200, "end": now_apple + 400},
         ])
-        monkeypatch.setattr("loom.adapters.knowledgec.KNOWLEDGEC_DB", db_path)
+        monkeypatch.setattr("alteris.adapters.knowledgec.KNOWLEDGEC_DB", db_path)
         adapter = KnowledgeCAdapter()
         result = adapter.ingest()
         assert len(result.events) == 2
@@ -225,7 +225,7 @@ class TestKnowledgeCAdapter:
         _create_knowledgec_db(db_path, rows=[
             {"z_pk": 1, "bundle": "com.test.app", "start": apple_start, "end": apple_start + 60},
         ])
-        monkeypatch.setattr("loom.adapters.knowledgec.KNOWLEDGEC_DB", db_path)
+        monkeypatch.setattr("alteris.adapters.knowledgec.KNOWLEDGEC_DB", db_path)
         adapter = KnowledgeCAdapter()
         result = adapter.ingest()
         assert len(result.events) == 1
@@ -240,7 +240,7 @@ class TestKnowledgeCAdapter:
             {"z_pk": 1, "bundle": "com.old.app", "start": 600_000_000, "end": 600_000_100},
             {"z_pk": 2, "bundle": "com.new.app", "start": 800_000_000, "end": 800_000_100},
         ])
-        monkeypatch.setattr("loom.adapters.knowledgec.KNOWLEDGEC_DB", db_path)
+        monkeypatch.setattr("alteris.adapters.knowledgec.KNOWLEDGEC_DB", db_path)
         adapter = KnowledgeCAdapter()
         # since_ts in unix: only events where apple_start > since_ts - APPLE_EPOCH_OFFSET
         # We want to filter out event 1 (apple 600M) but keep event 2 (apple 800M)
@@ -257,7 +257,7 @@ class TestKnowledgeCAdapter:
             {"z_pk": i, "bundle": f"com.app{i}.test", "start": now_apple + i * 10, "end": now_apple + i * 10 + 5}
             for i in range(1, 11)
         ])
-        monkeypatch.setattr("loom.adapters.knowledgec.KNOWLEDGEC_DB", db_path)
+        monkeypatch.setattr("alteris.adapters.knowledgec.KNOWLEDGEC_DB", db_path)
         adapter = KnowledgeCAdapter()
         result = adapter.ingest(limit=3)
         assert len(result.events) == 3
@@ -269,7 +269,7 @@ class TestKnowledgeCAdapter:
         _create_knowledgec_db(db_path, rows=[
             {"z_pk": 42, "bundle": "com.test.deterministic", "start": now_apple, "end": now_apple + 30},
         ])
-        monkeypatch.setattr("loom.adapters.knowledgec.KNOWLEDGEC_DB", db_path)
+        monkeypatch.setattr("alteris.adapters.knowledgec.KNOWLEDGEC_DB", db_path)
         adapter = KnowledgeCAdapter()
         r1 = adapter.ingest()
         r2 = adapter.ingest()
@@ -280,7 +280,7 @@ class TestKnowledgeCAdapter:
         """ZOBJECT exists but has no rows: get empty IngestResult."""
         db_path = tmp_path / "knowledgeC.db"
         _create_knowledgec_db(db_path)
-        monkeypatch.setattr("loom.adapters.knowledgec.KNOWLEDGEC_DB", db_path)
+        monkeypatch.setattr("alteris.adapters.knowledgec.KNOWLEDGEC_DB", db_path)
         adapter = KnowledgeCAdapter()
         result = adapter.ingest()
         assert len(result.events) == 0
@@ -294,7 +294,7 @@ class TestKnowledgeCAdapter:
             {"z_pk": 1, "bundle": None, "start": now_apple, "end": now_apple + 10},
             {"z_pk": 2, "bundle": "com.valid.app", "start": now_apple + 20, "end": now_apple + 30},
         ])
-        monkeypatch.setattr("loom.adapters.knowledgec.KNOWLEDGEC_DB", db_path)
+        monkeypatch.setattr("alteris.adapters.knowledgec.KNOWLEDGEC_DB", db_path)
         adapter = KnowledgeCAdapter()
         result = adapter.ingest()
         assert len(result.events) == 1
@@ -307,7 +307,7 @@ class TestKnowledgeCAdapter:
         _create_knowledgec_db(db_path, rows=[
             {"z_pk": 1, "bundle": "com.app.test", "start": now_apple, "end": now_apple + 300},
         ])
-        monkeypatch.setattr("loom.adapters.knowledgec.KNOWLEDGEC_DB", db_path)
+        monkeypatch.setattr("alteris.adapters.knowledgec.KNOWLEDGEC_DB", db_path)
         adapter = KnowledgeCAdapter()
         result = adapter.ingest()
         assert result.events[0].metadata["duration_seconds"] == 300
@@ -323,13 +323,13 @@ class TestSafariAdapter:
     def test_check_availability_present(self, tmp_path, monkeypatch):
         db_path = tmp_path / "History.db"
         _create_safari_db(db_path)
-        monkeypatch.setattr("loom.adapters.safari.SAFARI_HISTORY_DB", db_path)
+        monkeypatch.setattr("alteris.adapters.safari.SAFARI_HISTORY_DB", db_path)
         adapter = SafariAdapter()
         result = adapter.check_availability()
         assert result.available is True
 
     def test_check_availability_missing(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("loom.adapters.safari.SAFARI_HISTORY_DB", tmp_path / "no.db")
+        monkeypatch.setattr("alteris.adapters.safari.SAFARI_HISTORY_DB", tmp_path / "no.db")
         adapter = SafariAdapter()
         result = adapter.check_availability()
         assert result.available is False
@@ -340,7 +340,7 @@ class TestSafariAdapter:
         conn = sqlite3.connect(str(db_path))
         conn.execute("CREATE TABLE history_items (id INTEGER)")
         conn.close()
-        monkeypatch.setattr("loom.adapters.safari.SAFARI_HISTORY_DB", db_path)
+        monkeypatch.setattr("alteris.adapters.safari.SAFARI_HISTORY_DB", db_path)
         adapter = SafariAdapter()
         result = adapter.check_schema()
         assert result.compatible is False
@@ -357,7 +357,7 @@ class TestSafariAdapter:
                 "title": "Example Page",
             },
         ])
-        monkeypatch.setattr("loom.adapters.safari.SAFARI_HISTORY_DB", db_path)
+        monkeypatch.setattr("alteris.adapters.safari.SAFARI_HISTORY_DB", db_path)
         adapter = SafariAdapter()
         result = adapter.ingest()
         assert len(result.events) == 1
@@ -377,7 +377,7 @@ class TestSafariAdapter:
         _create_safari_db(db_path, rows=[
             {"visit_id": 1, "item_id": 1, "visit_time": cf_time, "url": "https://test.com", "domain": "test.com"},
         ])
-        monkeypatch.setattr("loom.adapters.safari.SAFARI_HISTORY_DB", db_path)
+        monkeypatch.setattr("alteris.adapters.safari.SAFARI_HISTORY_DB", db_path)
         adapter = SafariAdapter()
         result = adapter.ingest()
         assert result.events[0].timestamp == expected_unix
@@ -389,7 +389,7 @@ class TestSafariAdapter:
             {"visit_id": 1, "item_id": 1, "visit_time": 600_000_000, "url": "https://old.com", "domain": "old.com"},
             {"visit_id": 2, "item_id": 2, "visit_time": 800_000_000, "url": "https://new.com", "domain": "new.com"},
         ])
-        monkeypatch.setattr("loom.adapters.safari.SAFARI_HISTORY_DB", db_path)
+        monkeypatch.setattr("alteris.adapters.safari.SAFARI_HISTORY_DB", db_path)
         adapter = SafariAdapter()
         cutoff = 700_000_000 + APPLE_EPOCH_OFFSET
         result = adapter.ingest(since_ts=cutoff)
@@ -406,7 +406,7 @@ class TestSafariAdapter:
             {"visit_id": 3, "item_id": 3, "visit_time": now_cf + 2, "url": "data:text/html,<h1>Hi</h1>", "domain": ""},
             {"visit_id": 4, "item_id": 4, "visit_time": now_cf + 3, "url": "https://valid.com", "domain": "valid.com"},
         ])
-        monkeypatch.setattr("loom.adapters.safari.SAFARI_HISTORY_DB", db_path)
+        monkeypatch.setattr("alteris.adapters.safari.SAFARI_HISTORY_DB", db_path)
         adapter = SafariAdapter()
         result = adapter.ingest()
         assert len(result.events) == 1
@@ -419,7 +419,7 @@ class TestSafariAdapter:
         _create_safari_db(db_path, rows=[
             {"visit_id": 99, "item_id": 1, "visit_time": now_cf, "url": "https://stable.com", "domain": "stable.com"},
         ])
-        monkeypatch.setattr("loom.adapters.safari.SAFARI_HISTORY_DB", db_path)
+        monkeypatch.setattr("alteris.adapters.safari.SAFARI_HISTORY_DB", db_path)
         adapter = SafariAdapter()
         r1 = adapter.ingest()
         r2 = adapter.ingest()
@@ -430,7 +430,7 @@ class TestSafariAdapter:
         """Tables exist but no rows: empty IngestResult."""
         db_path = tmp_path / "History.db"
         _create_safari_db(db_path)
-        monkeypatch.setattr("loom.adapters.safari.SAFARI_HISTORY_DB", db_path)
+        monkeypatch.setattr("alteris.adapters.safari.SAFARI_HISTORY_DB", db_path)
         adapter = SafariAdapter()
         result = adapter.ingest()
         assert len(result.events) == 0
@@ -444,7 +444,7 @@ class TestSafariAdapter:
             {"visit_id": 1, "item_id": 1, "visit_time": now_cf,
              "url": "https://fallback-domain.com/path", "domain": ""},
         ])
-        monkeypatch.setattr("loom.adapters.safari.SAFARI_HISTORY_DB", db_path)
+        monkeypatch.setattr("alteris.adapters.safari.SAFARI_HISTORY_DB", db_path)
         adapter = SafariAdapter()
         result = adapter.ingest()
         assert result.events[0].metadata["domain"] == "fallback-domain.com"
@@ -611,10 +611,10 @@ class TestChromeAdapter:
             "brave": tmp_path / "Brave" / "nonexistent",
             "edge": tmp_path / "Edge" / "nonexistent",
         }
-        # get_chromium_adapters() does `from loom.constants import CHROMIUM_BROWSER_PATHS`
+        # get_chromium_adapters() does `from alteris.constants import CHROMIUM_BROWSER_PATHS`
         # inside the function body, so we patch the constants module directly.
-        import loom.constants
-        monkeypatch.setattr(loom.constants, "CHROMIUM_BROWSER_PATHS", fake_paths)
+        import alteris.constants
+        monkeypatch.setattr(alteris.constants, "CHROMIUM_BROWSER_PATHS", fake_paths)
 
         adapters = get_chromium_adapters()
         names = {a.source_name for a in adapters}
@@ -634,13 +634,13 @@ class TestNotesAdapter:
     def test_check_availability_present(self, tmp_path, monkeypatch):
         db_path = tmp_path / "NoteStore.sqlite"
         _create_notes_db(db_path)
-        monkeypatch.setattr("loom.adapters.notes.NOTES_DB", db_path)
+        monkeypatch.setattr("alteris.adapters.notes.NOTES_DB", db_path)
         adapter = NotesAdapter()
         result = adapter.check_availability()
         assert result.available is True
 
     def test_check_availability_missing(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("loom.adapters.notes.NOTES_DB", tmp_path / "missing.sqlite")
+        monkeypatch.setattr("alteris.adapters.notes.NOTES_DB", tmp_path / "missing.sqlite")
         adapter = NotesAdapter()
         result = adapter.check_availability()
         assert result.available is False
@@ -651,7 +651,7 @@ class TestNotesAdapter:
         conn = sqlite3.connect(str(db_path))
         conn.execute("CREATE TABLE ZICCLOUDSYNCINGOBJECT (Z_PK INTEGER)")
         conn.close()
-        monkeypatch.setattr("loom.adapters.notes.NOTES_DB", db_path)
+        monkeypatch.setattr("alteris.adapters.notes.NOTES_DB", db_path)
         adapter = NotesAdapter()
         result = adapter.check_schema()
         assert result.compatible is False
@@ -670,7 +670,7 @@ class TestNotesAdapter:
                 "notedata_pk": 20, "data_blob": compressed,
             },
         ])
-        monkeypatch.setattr("loom.adapters.notes.NOTES_DB", db_path)
+        monkeypatch.setattr("alteris.adapters.notes.NOTES_DB", db_path)
         adapter = NotesAdapter()
         result = adapter.ingest()
         assert len(result.events) == 1
@@ -693,7 +693,7 @@ class TestNotesAdapter:
                 "notedata_pk": 2, "data_blob": gzip.compress(b"Some content for the note body"),
             },
         ])
-        monkeypatch.setattr("loom.adapters.notes.NOTES_DB", db_path)
+        monkeypatch.setattr("alteris.adapters.notes.NOTES_DB", db_path)
         adapter = NotesAdapter()
         result = adapter.ingest()
         assert result.events[0].timestamp == expected_unix
@@ -716,7 +716,7 @@ class TestNotesAdapter:
                 "data_blob": gzip.compress(b"Visible content in this open note"),
             },
         ])
-        monkeypatch.setattr("loom.adapters.notes.NOTES_DB", db_path)
+        monkeypatch.setattr("alteris.adapters.notes.NOTES_DB", db_path)
         adapter = NotesAdapter()
         result = adapter.ingest()
         assert len(result.events) == 1
@@ -747,7 +747,7 @@ class TestNotesAdapter:
                 "notedata_pk": 6, "data_blob": gzip.compress(b"Content for stable note"),
             },
         ])
-        monkeypatch.setattr("loom.adapters.notes.NOTES_DB", db_path)
+        monkeypatch.setattr("alteris.adapters.notes.NOTES_DB", db_path)
         adapter = NotesAdapter()
         r1 = adapter.ingest()
         r2 = adapter.ingest()
@@ -758,7 +758,7 @@ class TestNotesAdapter:
         """Tables exist but no rows: empty IngestResult."""
         db_path = tmp_path / "NoteStore.sqlite"
         _create_notes_db(db_path)
-        monkeypatch.setattr("loom.adapters.notes.NOTES_DB", db_path)
+        monkeypatch.setattr("alteris.adapters.notes.NOTES_DB", db_path)
         adapter = NotesAdapter()
         result = adapter.ingest()
         assert len(result.events) == 0
@@ -775,14 +775,14 @@ class TestShellHistoryAdapter:
     def test_check_availability_present(self, tmp_path, monkeypatch):
         hist_path = tmp_path / ".zsh_history"
         hist_path.write_text(": 1700000000:0;echo hello\n")
-        monkeypatch.setattr("loom.adapters.shell_history.ZSH_HISTORY_FILE", hist_path)
+        monkeypatch.setattr("alteris.adapters.shell_history.ZSH_HISTORY_FILE", hist_path)
         adapter = ShellHistoryAdapter()
         result = adapter.check_availability()
         assert result.available is True
 
     def test_check_availability_missing(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("loom.adapters.shell_history.ZSH_HISTORY_FILE", tmp_path / "no_zsh")
-        monkeypatch.setattr("loom.adapters.shell_history.BASH_HISTORY_FILE", tmp_path / "no_bash")
+        monkeypatch.setattr("alteris.adapters.shell_history.ZSH_HISTORY_FILE", tmp_path / "no_zsh")
+        monkeypatch.setattr("alteris.adapters.shell_history.BASH_HISTORY_FILE", tmp_path / "no_bash")
         adapter = ShellHistoryAdapter()
         result = adapter.check_availability()
         assert result.available is False
@@ -795,8 +795,8 @@ class TestShellHistoryAdapter:
             ": 1700000100:0;git status\n"
             ": 1700000200:0;python main.py\n"
         )
-        monkeypatch.setattr("loom.adapters.shell_history.ZSH_HISTORY_FILE", hist_path)
-        monkeypatch.setattr("loom.adapters.shell_history.BASH_HISTORY_FILE", tmp_path / "no_bash")
+        monkeypatch.setattr("alteris.adapters.shell_history.ZSH_HISTORY_FILE", hist_path)
+        monkeypatch.setattr("alteris.adapters.shell_history.BASH_HISTORY_FILE", tmp_path / "no_bash")
         adapter = ShellHistoryAdapter()
         result = adapter.ingest()
         assert len(result.events) == 3
@@ -813,8 +813,8 @@ class TestShellHistoryAdapter:
             "world\n"
             ": 1700000100:0;ls\n"
         )
-        monkeypatch.setattr("loom.adapters.shell_history.ZSH_HISTORY_FILE", hist_path)
-        monkeypatch.setattr("loom.adapters.shell_history.BASH_HISTORY_FILE", tmp_path / "no_bash")
+        monkeypatch.setattr("alteris.adapters.shell_history.ZSH_HISTORY_FILE", hist_path)
+        monkeypatch.setattr("alteris.adapters.shell_history.BASH_HISTORY_FILE", tmp_path / "no_bash")
         adapter = ShellHistoryAdapter()
         result = adapter.ingest()
         assert len(result.events) == 2
@@ -842,8 +842,8 @@ class TestShellHistoryAdapter:
             ": 1600000000:0;old command\n"
             ": 1700000000:0;new command\n"
         )
-        monkeypatch.setattr("loom.adapters.shell_history.ZSH_HISTORY_FILE", hist_path)
-        monkeypatch.setattr("loom.adapters.shell_history.BASH_HISTORY_FILE", tmp_path / "no_bash")
+        monkeypatch.setattr("alteris.adapters.shell_history.ZSH_HISTORY_FILE", hist_path)
+        monkeypatch.setattr("alteris.adapters.shell_history.BASH_HISTORY_FILE", tmp_path / "no_bash")
         adapter = ShellHistoryAdapter()
         result = adapter.ingest(since_ts=1650000000)
         assert len(result.events) == 1
@@ -853,8 +853,8 @@ class TestShellHistoryAdapter:
         """Ingesting twice produces identical Event IDs."""
         hist_path = tmp_path / ".zsh_history"
         hist_path.write_text(": 1700000000:0;echo stable\n")
-        monkeypatch.setattr("loom.adapters.shell_history.ZSH_HISTORY_FILE", hist_path)
-        monkeypatch.setattr("loom.adapters.shell_history.BASH_HISTORY_FILE", tmp_path / "no_bash")
+        monkeypatch.setattr("alteris.adapters.shell_history.ZSH_HISTORY_FILE", hist_path)
+        monkeypatch.setattr("alteris.adapters.shell_history.BASH_HISTORY_FILE", tmp_path / "no_bash")
         adapter = ShellHistoryAdapter()
         r1 = adapter.ingest()
         r2 = adapter.ingest()
@@ -865,8 +865,8 @@ class TestShellHistoryAdapter:
         """Empty history file should produce empty result (no errors)."""
         hist_path = tmp_path / ".zsh_history"
         hist_path.write_text("")
-        monkeypatch.setattr("loom.adapters.shell_history.ZSH_HISTORY_FILE", hist_path)
-        monkeypatch.setattr("loom.adapters.shell_history.BASH_HISTORY_FILE", tmp_path / "no_bash")
+        monkeypatch.setattr("alteris.adapters.shell_history.ZSH_HISTORY_FILE", hist_path)
+        monkeypatch.setattr("alteris.adapters.shell_history.BASH_HISTORY_FILE", tmp_path / "no_bash")
         adapter = ShellHistoryAdapter()
         result = adapter.ingest()
         assert len(result.events) == 0

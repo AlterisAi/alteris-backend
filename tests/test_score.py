@@ -1,4 +1,4 @@
-"""Tests for loom.score: Stage 2 heuristic event scoring.
+"""Tests for alteris.score: Stage 2 heuristic event scoring.
 
 Tests cover:
   - Per-source scoring (mail, imessage, whatsapp, calendar, granola, slack)
@@ -18,7 +18,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import make_event
-from loom.constants import (
+from alteris.constants import (
     EVENT_TYPE_CALENDAR,
     EVENT_TYPE_EMAIL,
     EVENT_TYPE_IDENTITY,
@@ -26,7 +26,7 @@ from loom.constants import (
     EVENT_TYPE_MESSAGE,
     EVENT_TYPE_REACTION,
 )
-from loom.score import (
+from alteris.score import (
     DEFAULT_LENS,
     PersonEngagement,
     ScoreResult,

@@ -1,4 +1,4 @@
-"""Shared fixtures for all Loom test modules.
+"""Shared fixtures for all Alteris test modules.
 
 Provides:
   - In-memory LayeredGraphStore
@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from loom.constants import (
+from alteris.constants import (
     DEFAULT_CLAIM_CONFIDENCE,
     EVENT_TYPE_CALENDAR,
     EVENT_TYPE_EMAIL,
@@ -21,13 +21,13 @@ from loom.constants import (
     EVENT_TYPE_MESSAGE,
     HASH_PREFIX_LEN,
 )
-from loom.llm.mock import (
+from alteris.llm.mock import (
     MOCK_EXTRACTION_RESPONSE,
     MOCK_SYNTHESIS_RESPONSE,
     MOCK_TRIAGE_RESPONSE,
     MockLLMClient,
 )
-from loom.models import (
+from alteris.models import (
     Belief,
     BeliefStatus,
     BeliefType,
@@ -39,8 +39,8 @@ from loom.models import (
     Modality,
     PersonIdentifiers,
 )
-from loom.privacy import SensitivityLevel
-from loom.store import LayeredGraphStore
+from alteris.privacy import SensitivityLevel
+from alteris.store import LayeredGraphStore
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

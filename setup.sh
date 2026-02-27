@@ -1,11 +1,11 @@
 #!/bin/bash
-# Loom Setup Script
+# Alteris Setup Script
 # Run this once on a new Mac to install all dependencies.
 # Usage: bash setup.sh
 
 set -e
 
-echo "=== Loom Setup ==="
+echo "=== Alteris Setup ==="
 echo ""
 
 # 1. Check for Homebrew
@@ -29,22 +29,22 @@ else
     echo "[2/4] Python 3 already installed: $(python3 --version)"
 fi
 
-# 3. Install Loom package
+# 3. Install Alteris package
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-echo "[3/4] Installing Loom from ${SCRIPT_DIR}..."
+echo "[3/4] Installing Alteris from ${SCRIPT_DIR}..."
 pip3 install -e "$SCRIPT_DIR"
 
 # Verify
-if python3 -c "import loom" 2>/dev/null; then
-    echo "  Loom installed successfully."
+if python3 -c "import alteris" 2>/dev/null; then
+    echo "  Alteris installed successfully."
 else
-    echo "  ERROR: Loom import failed. Check the output above."
+    echo "  ERROR: Alteris import failed. Check the output above."
     exit 1
 fi
 
-# 4. Create ~/.loom directory
-mkdir -p ~/.loom
-echo "[4/4] Created ~/.loom data directory."
+# 4. Create ~/.alteris directory
+mkdir -p ~/.alteris
+echo "[4/4] Created ~/.alteris data directory."
 
 echo ""
 echo "=== Setup Complete ==="

@@ -1,4 +1,4 @@
-"""Tests for loom.beliefs: Per-thread synthesis + claims-to-beliefs compiler (Stage 7).
+"""Tests for alteris.beliefs: Per-thread synthesis + claims-to-beliefs compiler (Stage 7).
 
 Tests cover:
   - SynthesisCommitmentResult Pydantic validation
@@ -28,7 +28,7 @@ import time
 
 import pytest
 
-from loom.beliefs import (
+from alteris.beliefs import (
     COMPATIBLE_TYPES,
     SynthesisCommitmentResult,
     VALID_COMMITMENT_TYPES,
@@ -57,13 +57,13 @@ from loom.beliefs import (
     run_synthesis,
     synthesize_thread,
 )
-from loom.constants import (
+from alteris.constants import (
     SECONDS_PER_DAY,
     STALENESS_THREAD_AGE_DAYS,
 )
-from loom.extract import ThreadBundle
-from loom.llm.mock import MOCK_SYNTHESIS_COMMITMENT_RESPONSE, MockLLMClient
-from loom.models import (
+from alteris.extract import ThreadBundle
+from alteris.llm.mock import MOCK_SYNTHESIS_COMMITMENT_RESPONSE, MockLLMClient
+from alteris.models import (
     Belief,
     BeliefStatus,
     BeliefType,
@@ -73,7 +73,7 @@ from loom.models import (
     ExtractionProvenance,
     Modality,
 )
-from loom.store import LayeredGraphStore
+from alteris.store import LayeredGraphStore
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -491,7 +491,7 @@ class TestSynthesizeThread:
         mock_llm = MockLLMClient(
             json_responses={"THREAD CONTENT": MOCK_SYNTHESIS_COMMITMENT_RESPONSE},
         )
-        claims, _ = synthesize_thread(bundle, mock_llm)
+        claims, _, _ = synthesize_thread(bundle, mock_llm)
         assert len(claims) >= 1
         assert claims[0].claim_type == "commitment"
 
@@ -501,7 +501,7 @@ class TestSynthesizeThread:
         mock_llm = MockLLMClient(
             json_responses={"THREAD CONTENT": MOCK_SYNTHESIS_COMMITMENT_RESPONSE},
         )
-        _, msg_id_map = synthesize_thread(bundle, mock_llm)
+        _, msg_id_map, _ = synthesize_thread(bundle, mock_llm)
         assert isinstance(msg_id_map, dict)
         assert "msg_0" in msg_id_map
         assert msg_id_map["msg_0"] == e.id
@@ -512,7 +512,7 @@ class TestSynthesizeThread:
         mock_llm = MockLLMClient(
             json_responses={"THREAD CONTENT": {"commitments": []}},
         )
-        claims, _ = synthesize_thread(bundle, mock_llm)
+        claims, _, _ = synthesize_thread(bundle, mock_llm)
         assert claims == []
 
     def test_llm_called(self):
@@ -1052,13 +1052,13 @@ class TestRunSynthesis:
 # Logistics extraction
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-from loom.beliefs import (
+from alteris.beliefs import (
     extract_logistics,
     extract_relational,
     _logistics_claim_id,
     _relational_claim_id,
 )
-from loom.llm.mock import (
+from alteris.llm.mock import (
     MOCK_LOGISTICS_EXTRACTION_RESPONSE,
     MOCK_RELATIONAL_EXTRACTION_RESPONSE,
 )
@@ -1195,7 +1195,7 @@ class TestMultiGateRunSynthesis:
 
     def _seed_with_all_gates(self, store):
         """Seed store with events and all 3 gate claim types."""
-        from loom.extract import (
+        from alteris.extract import (
             GateResult,
             LogisticsGateResult,
             RelationalGateResult,
@@ -1383,7 +1383,7 @@ class TestClusterBySimilarity:
 
     def test_before_vs_after_not_in_stop_words(self):
         """Temporal words like 'before'/'after' are NOT in STOP_WORDS."""
-        from loom.beliefs import STOP_WORDS
+        from alteris.beliefs import STOP_WORDS
         assert "before" not in STOP_WORDS
         assert "after" not in STOP_WORDS
         assert "until" not in STOP_WORDS

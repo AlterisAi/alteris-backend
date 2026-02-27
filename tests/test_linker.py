@@ -1,4 +1,4 @@
-"""Tests for loom.linker: Event-Person linking with role assignment.
+"""Tests for alteris.linker: Event-Person linking with role assignment.
 
 Tests cover:
   - ParticipantRole enum
@@ -20,7 +20,7 @@ import time
 
 import pytest
 
-from loom.linker import (
+from alteris.linker import (
     ParticipantRole,
     _assign_roles_calendar,
     _assign_roles_contacts,
@@ -33,9 +33,9 @@ from loom.linker import (
     get_person_events,
     link_events_to_persons,
 )
-from loom.models import Event
-from loom.resolver import ParsedIdentity
-from loom.store import LayeredGraphStore
+from alteris.models import Event
+from alteris.resolver import ParsedIdentity
+from alteris.store import LayeredGraphStore
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

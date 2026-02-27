@@ -1,4 +1,4 @@
-"""Tests for loom.profile — shared profile loader."""
+"""Tests for alteris.profile — shared profile loader."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from loom.profile import (
+from alteris.profile import (
     flatten_profile,
     format_profile_context,
     get_colleague_names,
@@ -213,13 +213,13 @@ def test_flatten_preserves_sensitivity():
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def test_load_profile_yaml(tmp_path):
-    """load_profile finds YAML in LOOM_DIR."""
+    """load_profile finds YAML in ALTERIS_DIR."""
     import yaml
 
     yaml_path = tmp_path / "profile.yaml"
     yaml_path.write_text(yaml.dump(V2_PROFILE))
 
-    with patch("loom.constants.LOOM_DIR", tmp_path):
+    with patch("alteris.constants.ALTERIS_DIR", tmp_path):
         result = load_profile()
 
     assert result["identity"]["name"] == "Alex Chen"
@@ -230,7 +230,7 @@ def test_load_profile_json_fallback(tmp_path):
     json_path = tmp_path / "config.json"
     json_path.write_text(json.dumps({"user": {"emails": ["test@example.com"]}}))
 
-    with patch("loom.constants.LOOM_DIR", tmp_path), \
+    with patch("alteris.constants.ALTERIS_DIR", tmp_path), \
          patch("pathlib.Path.home", return_value=tmp_path / "nope"):
         result = load_profile()
 
@@ -241,7 +241,7 @@ def test_load_profile_no_files(tmp_path):
     """load_profile returns {} when no config files exist."""
     empty_dir = tmp_path / "empty"
     empty_dir.mkdir()
-    with patch("loom.constants.LOOM_DIR", empty_dir), \
+    with patch("alteris.constants.ALTERIS_DIR", empty_dir), \
          patch("pathlib.Path.home", return_value=tmp_path / "nope"):
         result = load_profile()
     assert result == {}

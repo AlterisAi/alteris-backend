@@ -1,4 +1,4 @@
-"""Tests for loom.cross_source: Cross-source content linking.
+"""Tests for alteris.cross_source: Cross-source content linking.
 
 Tests cover:
   - Dollar amount regex extraction
@@ -20,7 +20,7 @@ import time
 
 import pytest
 
-from loom.cross_source import (
+from alteris.cross_source import (
     DOLLAR_CLUSTER_WINDOW_S,
     TEMPORAL_BURST_WINDOW_S,
     annotate_events,
@@ -35,8 +35,8 @@ from loom.cross_source import (
     _extract_name_bridges,
     _extract_temporal_bursts,
 )
-from loom.models import Annotation, Event
-from loom.store import LayeredGraphStore
+from alteris.models import Annotation, Event
+from alteris.store import LayeredGraphStore
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

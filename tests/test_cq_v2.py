@@ -9,8 +9,8 @@ import time
 
 import pytest
 
-from loom.store import LayeredGraphStore
-from loom.mcp_tools.cq_tools import (
+from alteris.store import LayeredGraphStore
+from alteris.mcp_tools.cq_tools import (
     _auto_bucket,
     _compute_next_due,
     handle_cq_add_task,
@@ -257,8 +257,8 @@ class TestThreadProvenance:
         assert result["messages"] == []
 
     def test_get_thread_with_events(self, store):
-        from loom.models import Event
-        from loom.privacy import SensitivityLevel
+        from alteris.models import Event
+        from alteris.privacy import SensitivityLevel
 
         now = int(time.time())
         e1 = Event(
@@ -283,7 +283,7 @@ class TestThreadProvenance:
         store.put_event(e2)
 
         # Link events to a claim
-        from loom.models import Claim, Modality, ExtractionProvenance, ExtractionMethod
+        from alteris.models import Claim, Modality, ExtractionProvenance, ExtractionMethod
         claim = Claim(
             id="claim_proj",
             event_ids=["evt_1"],

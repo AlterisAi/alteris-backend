@@ -1,12 +1,12 @@
-"""Tests for loom.annotate: structural annotation extraction."""
+"""Tests for alteris.annotate: structural annotation extraction."""
 
 import time
 
 import pytest
 
-from loom.annotate import annotate_event, annotate_structural
-from loom.models import Annotation, Event
-from loom.store import LayeredGraphStore
+from alteris.annotate import annotate_event, annotate_structural
+from alteris.models import Annotation, Event
+from alteris.store import LayeredGraphStore
 
 
 @pytest.fixture

@@ -1,4 +1,4 @@
-"""Tests for loom.extract: Binary actionable gate (Stage 6).
+"""Tests for alteris.extract: Binary actionable gate (Stage 6).
 
 Tests cover:
   - GateResult Pydantic validation (actionable, reason, coercion)
@@ -20,7 +20,7 @@ import time
 
 import pytest
 
-from loom.extract import (
+from alteris.extract import (
     GateResult,
     ThreadBundle,
     _build_gate_claim,
@@ -37,14 +37,14 @@ from loom.extract import (
     run_extraction,
     run_gate,
 )
-from loom.llm.mock import (
+from alteris.llm.mock import (
     MOCK_GATE_NOT_ACTIONABLE_RESPONSE,
     MOCK_GATE_RESPONSE,
     MockLLMClient,
 )
-from loom.models import Claim, Event, ExtractionProvenance, Modality
-from loom.privacy import SensitivityLevel
-from loom.store import LayeredGraphStore
+from alteris.models import Claim, Event, ExtractionProvenance, Modality
+from alteris.privacy import SensitivityLevel
+from alteris.store import LayeredGraphStore
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -505,7 +505,7 @@ class TestRunExtraction:
 # Multi-gate: Logistics + Relational
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-from loom.extract import (
+from alteris.extract import (
     LogisticsGateResult,
     RelationalGateResult,
     _build_logistics_gate_claim,
@@ -519,7 +519,7 @@ from loom.extract import (
     run_logistics_gate,
     run_relational_gate,
 )
-from loom.llm.mock import (
+from alteris.llm.mock import (
     MOCK_LOGISTICS_GATE_NOT_LOGISTICS_RESPONSE,
     MOCK_LOGISTICS_GATE_RESPONSE,
     MOCK_RELATIONAL_GATE_NOT_RELATIONAL_RESPONSE,

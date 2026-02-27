@@ -1,4 +1,4 @@
-"""Tests for loom.privacy: SensitivityLevel, PrivacyPolicy, redact(), classify_field().
+"""Tests for alteris.privacy: SensitivityLevel, PrivacyPolicy, redact(), classify_field().
 
 Tests cover:
   - SensitivityLevel ordering and values
@@ -12,7 +12,7 @@ Tests cover:
 
 import pytest
 
-from loom.privacy import (
+from alteris.privacy import (
     CONTENT_CLOUD,
     FIELD_SENSITIVITY,
     FULL_CLOUD,

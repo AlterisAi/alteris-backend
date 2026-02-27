@@ -1,4 +1,4 @@
-"""Tests for loom.triage: LLM triage (Stage 4).
+"""Tests for alteris.triage: LLM triage (Stage 4).
 
 Tests cover:
   - TriageResult Pydantic validation
@@ -17,7 +17,7 @@ import time
 
 import pytest
 
-from loom.constants import (
+from alteris.constants import (
     EVENT_TYPE_CALENDAR,
     EVENT_TYPE_EMAIL,
     EVENT_TYPE_IDENTITY,
@@ -29,11 +29,11 @@ from loom.constants import (
     SCORE_FLOOR_TIER1_SENDER,
     SECONDS_PER_DAY,
 )
-from loom.llm.mock import MOCK_TRIAGE_RESPONSE, MockLLMClient
-from loom.models import Claim, Event, ExtractionProvenance, Modality
-from loom.privacy import SensitivityLevel
-from loom.store import LayeredGraphStore
-from loom.triage import (
+from alteris.llm.mock import MOCK_TRIAGE_RESPONSE, MockLLMClient
+from alteris.models import Claim, Event, ExtractionProvenance, Modality
+from alteris.privacy import SensitivityLevel
+from alteris.store import LayeredGraphStore
+from alteris.triage import (
     PROMPT_VERSION,
     TriageResult,
     TriageStrategy,
@@ -526,7 +526,7 @@ class TestRunTriage:
         store.put_event(e_skip)
         store.put_event(e_triage)
 
-        from loom.models import Projection
+        from alteris.models import Projection
         store.put_projections_batch([
             Projection(event_id=e_skip.id, lens="chief_of_staff",
                        score=0.0, route="skip", components={}, computed_at=now),
@@ -614,7 +614,7 @@ class TestProjectionRouteFiltering:
         e_skip = self._make_and_store(store, "skip_1")
         e_keep = self._make_and_store(store, "keep_1")
 
-        from loom.models import Projection
+        from alteris.models import Projection
         now = int(time.time())
         store.put_projections_batch([
             Projection(event_id=e_skip.id, lens="chief_of_staff",
@@ -632,7 +632,7 @@ class TestProjectionRouteFiltering:
         """Without lens, all events are returned regardless of projections."""
         e = self._make_and_store(store, "no_lens_1")
 
-        from loom.models import Projection
+        from alteris.models import Projection
         now = int(time.time())
         store.put_projections_batch([
             Projection(event_id=e.id, lens="chief_of_staff",
@@ -654,7 +654,7 @@ class TestProjectionRouteFiltering:
         """low_priority events are triaged (only skip is excluded)."""
         e = self._make_and_store(store, "low_pri_1")
 
-        from loom.models import Projection
+        from alteris.models import Projection
         now = int(time.time())
         store.put_projections_batch([
             Projection(event_id=e.id, lens="chief_of_staff",
@@ -670,7 +670,7 @@ class TestProjectionRouteFiltering:
         e_skip = self._make_and_store(store, "resume_skip_1")
         e_keep = self._make_and_store(store, "resume_keep_1")
 
-        from loom.models import Projection
+        from alteris.models import Projection
         now = int(time.time())
         store.put_projections_batch([
             Projection(event_id=e_skip.id, lens="chief_of_staff",
@@ -688,7 +688,7 @@ class TestProjectionRouteFiltering:
         """Skip projection for one lens doesn't affect another lens."""
         e = self._make_and_store(store, "cross_lens_1")
 
-        from loom.models import Projection
+        from alteris.models import Projection
         now = int(time.time())
         store.put_projections_batch([
             Projection(event_id=e.id, lens="chief_of_staff",

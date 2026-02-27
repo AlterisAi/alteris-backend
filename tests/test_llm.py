@@ -1,4 +1,4 @@
-"""Tests for loom.llm: base interface, mock client, canned responses.
+"""Tests for alteris.llm: base interface, mock client, canned responses.
 
 Tests cover:
   - MockLLMClient embedding determinism and dimensionality
@@ -14,9 +14,9 @@ import math
 
 import pytest
 
-from loom.constants import EMBEDDING_DIM
-from loom.llm.base import LLMClient
-from loom.llm.mock import (
+from alteris.constants import EMBEDDING_DIM
+from alteris.llm.base import LLMClient
+from alteris.llm.mock import (
     MOCK_EXTRACTION_RESPONSE,
     MOCK_SYNTHESIS_RESPONSE,
     MOCK_TRIAGE_RESPONSE,

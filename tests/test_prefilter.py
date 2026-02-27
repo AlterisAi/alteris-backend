@@ -2,8 +2,8 @@
 
 import pytest
 
-from loom.models import Event
-from loom.prefilter import is_machine_generated
+from alteris.models import Event
+from alteris.prefilter import is_machine_generated
 
 
 def _make_mail_event(

@@ -1,4 +1,4 @@
-"""Tests for loom.models: Event, Claim, Belief dataclasses, enums, ID generation.
+"""Tests for alteris.models: Event, Claim, Belief dataclasses, enums, ID generation.
 
 Tests cover:
   - Event ID determinism (same input -> same ID)
@@ -15,8 +15,8 @@ import time
 
 import pytest
 
-from loom.constants import CONTENT_HASH_PREFIX_LEN, HASH_PREFIX_LEN
-from loom.models import (
+from alteris.constants import CONTENT_HASH_PREFIX_LEN, HASH_PREFIX_LEN
+from alteris.models import (
     Belief,
     BeliefStatus,
     BeliefType,
@@ -28,7 +28,7 @@ from loom.models import (
     Modality,
     PersonIdentifiers,
 )
-from loom.privacy import SensitivityLevel
+from alteris.privacy import SensitivityLevel
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

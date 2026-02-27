@@ -1,4 +1,4 @@
-"""Tests for loom.briefing: Weekly briefing generator (Stage 8).
+"""Tests for alteris.briefing: Weekly briefing generator (Stage 8).
 
 Tests cover:
   - CalendarEvent and Commitment data classes
@@ -17,7 +17,7 @@ import time
 
 import pytest
 
-from loom.briefing import (
+from alteris.briefing import (
     BRIEFING_DAYS_AHEAD,
     CalendarEvent,
     Commitment,
@@ -33,16 +33,16 @@ from loom.briefing import (
     _run_anticipation_pass,
     run_briefing,
 )
-from loom.llm.mock import MockLLMClient
-from loom.models import (
+from alteris.llm.mock import MockLLMClient
+from alteris.models import (
     Annotation,
     Claim,
     Event,
     ExtractionProvenance,
     Modality,
 )
-from loom.privacy import SensitivityLevel
-from loom.store import LayeredGraphStore
+from alteris.privacy import SensitivityLevel
+from alteris.store import LayeredGraphStore
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

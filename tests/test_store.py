@@ -1,4 +1,4 @@
-"""Tests for loom.store: LayeredGraphStore backed by in-memory SQLite.
+"""Tests for alteris.store: LayeredGraphStore backed by in-memory SQLite.
 
 Tests cover:
   - Schema creation (tables, indexes)
@@ -18,8 +18,8 @@ import time
 
 import pytest
 
-from loom.constants import DEFAULT_EVENT_QUERY_LIMIT, DEFAULT_QUERY_LIMIT
-from loom.models import (
+from alteris.constants import DEFAULT_EVENT_QUERY_LIMIT, DEFAULT_QUERY_LIMIT
+from alteris.models import (
     Annotation,
     Belief,
     BeliefStatus,
@@ -32,8 +32,8 @@ from loom.models import (
     Modality,
     Projection,
 )
-from loom.privacy import SensitivityLevel
-from loom.store import LayeredGraphStore
+from alteris.privacy import SensitivityLevel
+from alteris.store import LayeredGraphStore
 
 
 # Import helpers - pytest adds conftest.py's dir to path automatically

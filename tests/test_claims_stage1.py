@@ -1,4 +1,4 @@
-"""Tests for loom.claims_stage1: Deterministic claim extractors.
+"""Tests for alteris.claims_stage1: Deterministic claim extractors.
 
 Tests cover:
   - _claim_id determinism
@@ -19,7 +19,7 @@ import time
 
 import pytest
 
-from loom.claims_stage1 import (
+from alteris.claims_stage1 import (
     _claim_id,
     _extract_communication_channels,
     _extract_communication_frequency,
@@ -30,8 +30,8 @@ from loom.claims_stage1 import (
     _setup_user_events_table,
     extract_stage1_claims,
 )
-from loom.models import Event, Modality
-from loom.store import LayeredGraphStore
+from alteris.models import Event, Modality
+from alteris.store import LayeredGraphStore
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -358,7 +358,7 @@ class TestExtractStage1Claims:
 # Populate person profiles
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-from loom.claims_stage1 import populate_person_profiles
+from alteris.claims_stage1 import populate_person_profiles
 
 
 class TestPopulatePersonProfiles:

@@ -20,14 +20,14 @@ import time
 
 import pytest
 
-from loom.llm.mock import (
+from alteris.llm.mock import (
     MOCK_CONSIGLIERE_RESPONSE,
     MOCK_ORACLE_EXPANSION_RESPONSE,
     MOCK_ORACLE_SYNTHESIS_RESPONSE,
     MOCK_SURVEYOR_RESPONSE,
     MockLLMClient,
 )
-from loom.store import LayeredGraphStore
+from alteris.store import LayeredGraphStore
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -246,23 +246,23 @@ class TestScoutSearchEvents:
     """Tests for scout_search_events."""
 
     def test_search_by_keyword(self, store):
-        from loom.sandwich import scout_search_events
+        from alteris.sandwich import scout_search_events
         results = scout_search_events(store.conn, keyword="proposal")
         assert len(results) >= 1
         assert any("proposal" in (r.get("body") or "").lower() for r in results)
 
     def test_search_by_source(self, store):
-        from loom.sandwich import scout_search_events
+        from alteris.sandwich import scout_search_events
         results = scout_search_events(store.conn, source="mail", keyword="")
         assert all(r["source"] == "mail" for r in results)
 
     def test_search_with_limit(self, store):
-        from loom.sandwich import scout_search_events
+        from alteris.sandwich import scout_search_events
         results = scout_search_events(store.conn, keyword="", limit=2)
         assert len(results) <= 2
 
     def test_search_returns_timestamps(self, store):
-        from loom.sandwich import scout_search_events
+        from alteris.sandwich import scout_search_events
         results = scout_search_events(store.conn, keyword="proposal")
         for r in results:
             assert "time" in r
@@ -273,18 +273,18 @@ class TestScoutSearchCommitments:
     """Tests for scout_search_commitments."""
 
     def test_search_by_keyword(self, store):
-        from loom.sandwich import scout_search_commitments
+        from alteris.sandwich import scout_search_commitments
         results = scout_search_commitments(store.conn, keyword="proposal")
         assert len(results) >= 1
         assert any("proposal" in (r.get("what") or "").lower() for r in results)
 
     def test_search_payment(self, store):
-        from loom.sandwich import scout_search_commitments
+        from alteris.sandwich import scout_search_commitments
         results = scout_search_commitments(store.conn, keyword="BofA")
         assert len(results) >= 1
 
     def test_empty_search(self, store):
-        from loom.sandwich import scout_search_commitments
+        from alteris.sandwich import scout_search_commitments
         results = scout_search_commitments(store.conn, keyword="nonexistent_xyz")
         assert len(results) == 0
 
@@ -293,24 +293,24 @@ class TestScoutGetPersonContext:
     """Tests for scout_get_person_context."""
 
     def test_find_known_person(self, store):
-        from loom.sandwich import scout_get_person_context
+        from alteris.sandwich import scout_get_person_context
         result = scout_get_person_context(store.conn, name="Alice")
         assert "error" not in result
         assert result["name"] == "Alice Smith"
         assert "recent_events" in result
 
     def test_person_not_found(self, store):
-        from loom.sandwich import scout_get_person_context
+        from alteris.sandwich import scout_get_person_context
         result = scout_get_person_context(store.conn, name="Nonexistent Person XYZ")
         assert "error" in result
 
     def test_includes_commitments(self, store):
-        from loom.sandwich import scout_get_person_context
+        from alteris.sandwich import scout_get_person_context
         result = scout_get_person_context(store.conn, name="Alice")
         assert "open_commitments" in result
 
     def test_includes_beliefs(self, store):
-        from loom.sandwich import scout_get_person_context
+        from alteris.sandwich import scout_get_person_context
         result = scout_get_person_context(store.conn, name="Alice")
         assert "beliefs" in result
 
@@ -319,7 +319,7 @@ class TestScoutTemporalXref:
     """Tests for scout_temporal_xref."""
 
     def test_find_events_near_date(self, store):
-        from loom.sandwich import scout_temporal_xref
+        from alteris.sandwich import scout_temporal_xref
         from datetime import datetime, timezone
         now = int(time.time())
         date_str = datetime.fromtimestamp(now, tz=timezone.utc).strftime("%Y-%m-%d")
@@ -327,7 +327,7 @@ class TestScoutTemporalXref:
         assert len(results) >= 1
 
     def test_invalid_date(self, store):
-        from loom.sandwich import scout_temporal_xref
+        from alteris.sandwich import scout_temporal_xref
         results = scout_temporal_xref(store.conn, "not-a-date", source="mail")
         assert len(results) == 1
         assert "error" in results[0]
@@ -337,12 +337,12 @@ class TestScoutGetThread:
     """Tests for scout_get_thread."""
 
     def test_find_thread(self, store):
-        from loom.sandwich import scout_get_thread
+        from alteris.sandwich import scout_get_thread
         results = scout_get_thread(store.conn, thread_id="thread_1")
         assert len(results) >= 1
 
     def test_empty_thread(self, store):
-        from loom.sandwich import scout_get_thread
+        from alteris.sandwich import scout_get_thread
         results = scout_get_thread(store.conn, thread_id="nonexistent_thread")
         assert len(results) == 0
 
@@ -351,7 +351,7 @@ class TestExecuteScoutQuery:
     """Tests for execute_scout_query."""
 
     def test_valid_query(self, store):
-        from loom.sandwich import execute_scout_query
+        from alteris.sandwich import execute_scout_query
         result = execute_scout_query(store.conn, {
             "tool": "search_commitments",
             "args": {"keyword": "proposal"},
@@ -360,7 +360,7 @@ class TestExecuteScoutQuery:
         assert "error" not in result
 
     def test_unknown_tool(self, store):
-        from loom.sandwich import execute_scout_query
+        from alteris.sandwich import execute_scout_query
         result = execute_scout_query(store.conn, {
             "tool": "nonexistent_tool",
             "args": {},
@@ -376,7 +376,7 @@ class TestVisibilityIndex:
     """Tests for compute_visibility_index."""
 
     def test_computes_visibility(self, store):
-        from loom.sandwich import compute_visibility_index
+        from alteris.sandwich import compute_visibility_index
         result = compute_visibility_index(store.conn)
         # Should detect "finance" domain from BofA payment commitment
         assert "finance" in result
@@ -384,7 +384,7 @@ class TestVisibilityIndex:
         assert 0.0 <= result["finance"]["visibility"] <= 1.0
 
     def test_assessment_labels(self, store):
-        from loom.sandwich import compute_visibility_index
+        from alteris.sandwich import compute_visibility_index
         result = compute_visibility_index(store.conn)
         for domain, data in result.items():
             assert data["assessment"] in (
@@ -402,12 +402,12 @@ class TestPhase1Surveyor:
     """Tests for phase1_surveyor."""
 
     def test_returns_vectors(self, mock_llm):
-        from loom.sandwich import phase1_surveyor
+        from alteris.sandwich import phase1_surveyor
         vectors = phase1_surveyor(mock_llm, {"meta": {}, "schema": {}})
         assert len(vectors) == 3
 
     def test_vectors_have_structure(self, mock_llm):
-        from loom.sandwich import phase1_surveyor
+        from alteris.sandwich import phase1_surveyor
         vectors = phase1_surveyor(mock_llm, {"meta": {}})
         for v in vectors:
             assert "target" in v
@@ -415,7 +415,7 @@ class TestPhase1Surveyor:
             assert "scout_queries" in v
 
     def test_caps_at_max(self, mock_llm):
-        from loom.sandwich import phase1_surveyor
+        from alteris.sandwich import phase1_surveyor
         vectors = phase1_surveyor(mock_llm, {"meta": {}})
         assert len(vectors) <= 3
 
@@ -424,7 +424,7 @@ class TestPhase2Scout:
     """Tests for phase2_scout."""
 
     def test_executes_queries(self, store):
-        from loom.sandwich import phase2_scout
+        from alteris.sandwich import phase2_scout
         vectors = [
             {
                 "target": "Test vector",
@@ -440,7 +440,7 @@ class TestPhase2Scout:
         assert len(results[0]["evidence"]) == 1
 
     def test_handles_empty_vectors(self, store):
-        from loom.sandwich import phase2_scout
+        from alteris.sandwich import phase2_scout
         results = phase2_scout(store.conn, [])
         assert results == []
 
@@ -449,26 +449,26 @@ class TestPhase3Consigliere:
     """Tests for phase3_consigliere."""
 
     def test_returns_findings(self, mock_llm):
-        from loom.sandwich import phase3_consigliere
+        from alteris.sandwich import phase3_consigliere
         scout_results = [{"target": "Test", "logic": "Testing", "severity": "HIGH", "evidence": []}]
         result = phase3_consigliere(mock_llm, scout_results, graph_ls_meta={})
         assert "findings" in result
         assert len(result["findings"]) > 0
 
     def test_includes_blind_spots(self, mock_llm):
-        from loom.sandwich import phase3_consigliere
+        from alteris.sandwich import phase3_consigliere
         scout_results = [{"target": "T", "logic": "L", "severity": "H", "evidence": []}]
         result = phase3_consigliere(mock_llm, scout_results, graph_ls_meta={})
         assert "blind_spots" in result
 
     def test_includes_decision_dag(self, mock_llm):
-        from loom.sandwich import phase3_consigliere
+        from alteris.sandwich import phase3_consigliere
         scout_results = [{"target": "T", "logic": "L", "severity": "H", "evidence": []}]
         result = phase3_consigliere(mock_llm, scout_results, graph_ls_meta={})
         assert "decision_dag" in result
 
     def test_includes_visibility_assessment(self, mock_llm):
-        from loom.sandwich import phase3_consigliere
+        from alteris.sandwich import phase3_consigliere
         scout_results = [{"target": "T", "logic": "L", "severity": "H", "evidence": []}]
         result = phase3_consigliere(mock_llm, scout_results, graph_ls_meta={})
         assert "visibility_assessment" in result
@@ -482,7 +482,7 @@ class TestRunSandwich:
     """Tests for run_sandwich end-to-end."""
 
     def test_full_pipeline(self, store, mock_llm):
-        from loom.sandwich import run_sandwich
+        from alteris.sandwich import run_sandwich
         result = run_sandwich(store, mock_llm)
         assert "inquiry_vectors" in result
         assert "scout_results" in result
@@ -491,7 +491,7 @@ class TestRunSandwich:
         assert result["total_elapsed"] >= 0
 
     def test_pipeline_produces_output(self, store, mock_llm):
-        from loom.sandwich import run_sandwich
+        from alteris.sandwich import run_sandwich
         result = run_sandwich(store, mock_llm)
         output = result["output"]
         assert "Phase 1: Surveyor" in output
@@ -499,19 +499,19 @@ class TestRunSandwich:
         assert "Phase 3: Consigliere" in output
 
     def test_pipeline_includes_findings(self, store, mock_llm):
-        from loom.sandwich import run_sandwich
+        from alteris.sandwich import run_sandwich
         result = run_sandwich(store, mock_llm)
         output = result["output"]
         assert "Finding" in output
 
     def test_pipeline_includes_dag(self, store, mock_llm):
-        from loom.sandwich import run_sandwich
+        from alteris.sandwich import run_sandwich
         result = run_sandwich(store, mock_llm)
         output = result["output"]
         assert "Decision DAG" in output
 
     def test_pipeline_includes_visibility(self, store, mock_llm):
-        from loom.sandwich import run_sandwich
+        from alteris.sandwich import run_sandwich
         result = run_sandwich(store, mock_llm)
         output = result["output"]
         assert "Low Visibility Domains" in output
@@ -525,7 +525,7 @@ class TestFormatSandwichOutput:
     """Tests for format_sandwich_output."""
 
     def test_formats_all_sections(self):
-        from loom.sandwich import format_sandwich_output
+        from alteris.sandwich import format_sandwich_output
         result = {
             "inquiry_vectors": MOCK_SURVEYOR_RESPONSE["inquiry_vectors"],
             "scout_results": [
@@ -547,7 +547,7 @@ class TestFormatSandwichOutput:
         assert "3.5s" in output
 
     def test_handles_empty_consigliere(self):
-        from loom.sandwich import format_sandwich_output
+        from alteris.sandwich import format_sandwich_output
         result = {
             "inquiry_vectors": [],
             "scout_results": [],
@@ -571,29 +571,29 @@ class TestOracleAsk:
     """Tests for ask_oracle."""
 
     def test_returns_answer(self, store, mock_llm):
-        from loom.oracle import ask_oracle
+        from alteris.oracle import ask_oracle
         result = ask_oracle(store, mock_llm, "Where did I promise to send the proposal?")
         assert "answer" in result
         assert result["answer"]
 
     def test_includes_confidence(self, store, mock_llm):
-        from loom.oracle import ask_oracle
+        from alteris.oracle import ask_oracle
         result = ask_oracle(store, mock_llm, "Where did I promise?")
         assert "confidence" in result
         assert 0 <= result["confidence"] <= 1
 
     def test_includes_sources(self, store, mock_llm):
-        from loom.oracle import ask_oracle
+        from alteris.oracle import ask_oracle
         result = ask_oracle(store, mock_llm, "Where did I promise?")
         assert "sources" in result
 
     def test_includes_interpretation(self, store, mock_llm):
-        from loom.oracle import ask_oracle
+        from alteris.oracle import ask_oracle
         result = ask_oracle(store, mock_llm, "How does Alice relate to Kai?")
         assert "interpretation" in result
 
     def test_includes_elapsed(self, store, mock_llm):
-        from loom.oracle import ask_oracle
+        from alteris.oracle import ask_oracle
         result = ask_oracle(store, mock_llm, "test question")
         assert "elapsed" in result
         assert result["elapsed"] >= 0
@@ -603,7 +603,7 @@ class TestOracleFormat:
     """Tests for format_oracle_output."""
 
     def test_formats_answer(self):
-        from loom.oracle import format_oracle_output
+        from alteris.oracle import format_oracle_output
         result = {
             "question": "Where did I promise?",
             "interpretation": "Looking for promise location",
@@ -626,7 +626,7 @@ class TestOracleFormat:
         assert "Follow-up:" in output
 
     def test_handles_no_sources(self):
-        from loom.oracle import format_oracle_output
+        from alteris.oracle import format_oracle_output
         result = {
             "question": "test",
             "interpretation": "test",
@@ -652,37 +652,37 @@ class TestGraphLsRefinements:
     """Tests for graph_ls work rhythm and domain bleed."""
 
     def test_work_rhythm_no_data(self, store):
-        from loom.graph_ls import _detect_work_rhythm
+        from alteris.graph_ls import _detect_work_rhythm
         result = _detect_work_rhythm(store.conn, int(time.time()))
         # Should have data since we seeded knowledgec events
         assert isinstance(result, dict)
 
     def test_work_rhythm_with_data(self, store):
-        from loom.graph_ls import _detect_work_rhythm
+        from alteris.graph_ls import _detect_work_rhythm
         # We seeded one knowledgec event, so should have data
         result = _detect_work_rhythm(store.conn, int(time.time()))
         if "days" in result:
             assert len(result["days"]) >= 1
 
     def test_shadow_activity_detection(self, store):
-        from loom.graph_ls import _detect_shadow_activity
+        from alteris.graph_ls import _detect_shadow_activity
         result = _detect_shadow_activity(store.conn, int(time.time()))
         # Should be a list (may be empty if not enough data)
         assert isinstance(result, list)
 
     def test_graph_ls_includes_work_rhythm(self, store):
-        from loom.graph_ls import generate_graph_ls
+        from alteris.graph_ls import generate_graph_ls
         result = generate_graph_ls(store)
         assert "work_rhythm" in result["meta"]
 
     def test_tier4_includes_domain_bleed(self, store):
-        from loom.graph_ls import generate_graph_ls
+        from alteris.graph_ls import generate_graph_ls
         result = generate_graph_ls(store)
         tier4 = result["TIER_4_RELATIONSHIPS"]
         assert "domain bleed" in tier4["description"].lower()
 
     def test_graph_ls_full_output(self, store):
-        from loom.graph_ls import generate_graph_ls
+        from alteris.graph_ls import generate_graph_ls
         result = generate_graph_ls(store)
         assert "meta" in result
         assert "TIER_1_INNER_CIRCLE" in result

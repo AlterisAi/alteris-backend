@@ -10,10 +10,10 @@ import time
 
 import pytest
 
-from loom.store import LayeredGraphStore
-from loom.models import Event, Claim, Belief, Modality, ExtractionProvenance, ExtractionMethod
-from loom.models import BeliefType, EpistemicLevel, BeliefStatus
-from loom.privacy import SensitivityLevel
+from alteris.store import LayeredGraphStore
+from alteris.models import Event, Claim, Belief, Modality, ExtractionProvenance, ExtractionMethod
+from alteris.models import BeliefType, EpistemicLevel, BeliefStatus
+from alteris.privacy import SensitivityLevel
 
 
 @pytest.fixture
@@ -156,8 +156,8 @@ class TestOnboardingSummaryStructure:
     """Test the overall shape of the onboarding summary response."""
 
     def test_empty_kg(self, store):
-        from loom.mcp_tools.onboarding_tools import handle_loom_onboarding_summary
-        result = handle_loom_onboarding_summary(store)
+        from alteris.mcp_tools.onboarding_tools import handle_alteris_onboarding_summary
+        result = handle_alteris_onboarding_summary(store)
 
         assert "stats" in result
         assert "top_contacts" in result
@@ -170,8 +170,8 @@ class TestOnboardingSummaryStructure:
         assert "cross_source_discoveries" in result
 
     def test_empty_stats_zeroes(self, store):
-        from loom.mcp_tools.onboarding_tools import handle_loom_onboarding_summary
-        result = handle_loom_onboarding_summary(store)
+        from alteris.mcp_tools.onboarding_tools import handle_alteris_onboarding_summary
+        result = handle_alteris_onboarding_summary(store)
 
         stats = result["stats"]
         assert stats["total_events"] == 0
@@ -179,9 +179,9 @@ class TestOnboardingSummaryStructure:
         assert stats["total_beliefs"] == 0
 
     def test_populated_kg(self, store):
-        from loom.mcp_tools.onboarding_tools import handle_loom_onboarding_summary
+        from alteris.mcp_tools.onboarding_tools import handle_alteris_onboarding_summary
         _seed_basic_kg(store)
-        result = handle_loom_onboarding_summary(store)
+        result = handle_alteris_onboarding_summary(store)
 
         stats = result["stats"]
         assert stats["total_events"] == 8
@@ -194,11 +194,11 @@ class TestTopContacts:
     """Test top contacts extraction from event-person links."""
 
     def test_no_contacts_empty_kg(self, store):
-        from loom.mcp_tools.onboarding_tools import _get_top_contacts
+        from alteris.mcp_tools.onboarding_tools import _get_top_contacts
         assert _get_top_contacts(store) == []
 
     def test_contacts_ordered_by_event_count(self, store):
-        from loom.mcp_tools.onboarding_tools import _get_top_contacts
+        from alteris.mcp_tools.onboarding_tools import _get_top_contacts
         _seed_basic_kg(store)
         contacts = _get_top_contacts(store)
 
@@ -208,7 +208,7 @@ class TestTopContacts:
         assert contacts[0]["event_count"] >= 3
 
     def test_cross_source_flag(self, store):
-        from loom.mcp_tools.onboarding_tools import _get_top_contacts
+        from alteris.mcp_tools.onboarding_tools import _get_top_contacts
         _seed_basic_kg(store)
         contacts = _get_top_contacts(store)
 
@@ -217,7 +217,7 @@ class TestTopContacts:
         assert len(alice["sources"]) >= 2
 
     def test_user_excluded(self, store):
-        from loom.mcp_tools.onboarding_tools import _get_top_contacts
+        from alteris.mcp_tools.onboarding_tools import _get_top_contacts
         _seed_basic_kg(store)
         contacts = _get_top_contacts(store)
 
@@ -225,7 +225,7 @@ class TestTopContacts:
         assert "User" not in names
 
     def test_limit_respected(self, store):
-        from loom.mcp_tools.onboarding_tools import _get_top_contacts
+        from alteris.mcp_tools.onboarding_tools import _get_top_contacts
         _seed_basic_kg(store)
         contacts = _get_top_contacts(store, limit=2)
         assert len(contacts) <= 2
@@ -235,7 +235,7 @@ class TestCommitmentSummary:
     """Test commitment summary aggregation."""
 
     def test_empty_commitments(self, store):
-        from loom.mcp_tools.onboarding_tools import _get_commitment_summary
+        from alteris.mcp_tools.onboarding_tools import _get_commitment_summary
         result = _get_commitment_summary(store, "2026-02-17")
 
         assert result["total_open"] == 0
@@ -243,7 +243,7 @@ class TestCommitmentSummary:
         assert result["sample"] == []
 
     def test_overdue_detected(self, store):
-        from loom.mcp_tools.onboarding_tools import _get_commitment_summary
+        from alteris.mcp_tools.onboarding_tools import _get_commitment_summary
         _seed_basic_kg(store)
         result = _get_commitment_summary(store, "2026-02-17")
 
@@ -251,7 +251,7 @@ class TestCommitmentSummary:
         assert result["overdue_count"] >= 1  # cm1 deadline 2026-02-15 is overdue
 
     def test_high_priority_filtered(self, store):
-        from loom.mcp_tools.onboarding_tools import _get_commitment_summary
+        from alteris.mcp_tools.onboarding_tools import _get_commitment_summary
         _seed_basic_kg(store)
         result = _get_commitment_summary(store, "2026-02-17")
 
@@ -260,7 +260,7 @@ class TestCommitmentSummary:
             assert item["priority"] <= 2
 
     def test_sample_sorted_by_priority(self, store):
-        from loom.mcp_tools.onboarding_tools import _get_commitment_summary
+        from alteris.mcp_tools.onboarding_tools import _get_commitment_summary
         _seed_basic_kg(store)
         result = _get_commitment_summary(store, "2026-02-17")
 
@@ -272,11 +272,11 @@ class TestNotableBeliefs:
     """Test notable belief selection."""
 
     def test_empty_beliefs(self, store):
-        from loom.mcp_tools.onboarding_tools import _get_notable_beliefs
+        from alteris.mcp_tools.onboarding_tools import _get_notable_beliefs
         assert _get_notable_beliefs(store) == []
 
     def test_beliefs_filtered_by_confidence(self, store):
-        from loom.mcp_tools.onboarding_tools import _get_notable_beliefs
+        from alteris.mcp_tools.onboarding_tools import _get_notable_beliefs
         _seed_basic_kg(store)
         beliefs = _get_notable_beliefs(store)
 
@@ -285,7 +285,7 @@ class TestNotableBeliefs:
         assert "Gutters need cleaning before spring" not in summaries
 
     def test_entities_before_observations(self, store):
-        from loom.mcp_tools.onboarding_tools import _get_notable_beliefs
+        from alteris.mcp_tools.onboarding_tools import _get_notable_beliefs
         _seed_basic_kg(store)
         beliefs = _get_notable_beliefs(store)
 
@@ -299,11 +299,11 @@ class TestUpcomingEvents:
     """Test upcoming calendar event extraction."""
 
     def test_no_calendar_events(self, store):
-        from loom.mcp_tools.onboarding_tools import _get_upcoming_events
+        from alteris.mcp_tools.onboarding_tools import _get_upcoming_events
         assert _get_upcoming_events(store, int(time.time())) == []
 
     def test_finds_upcoming_events(self, store):
-        from loom.mcp_tools.onboarding_tools import _get_upcoming_events
+        from alteris.mcp_tools.onboarding_tools import _get_upcoming_events
         _seed_basic_kg(store)
         now = int(time.time())
         events = _get_upcoming_events(store, now)
@@ -316,11 +316,11 @@ class TestSourceCoverage:
     """Test source coverage description."""
 
     def test_empty_sources(self, store):
-        from loom.mcp_tools.onboarding_tools import _get_source_coverage
+        from alteris.mcp_tools.onboarding_tools import _get_source_coverage
         assert _get_source_coverage({}) == []
 
     def test_sources_ordered_by_count(self, store):
-        from loom.mcp_tools.onboarding_tools import _get_source_coverage
+        from alteris.mcp_tools.onboarding_tools import _get_source_coverage
         _seed_basic_kg(store)
         stats = store.stats()
         coverage = _get_source_coverage(stats)
@@ -329,7 +329,7 @@ class TestSourceCoverage:
         assert counts == sorted(counts, reverse=True)
 
     def test_source_has_icon(self, store):
-        from loom.mcp_tools.onboarding_tools import _get_source_coverage
+        from alteris.mcp_tools.onboarding_tools import _get_source_coverage
         stats = {"events_by_source": {"mail": 100, "imessage": 50}}
         coverage = _get_source_coverage(stats)
 
@@ -342,11 +342,11 @@ class TestSuggestSenderRules:
     """Test sender rule suggestions."""
 
     def test_no_events(self, store):
-        from loom.mcp_tools.onboarding_tools import _suggest_sender_rules
+        from alteris.mcp_tools.onboarding_tools import _suggest_sender_rules
         assert _suggest_sender_rules(store) == []
 
     def test_suggests_from_frequent_senders(self, store):
-        from loom.mcp_tools.onboarding_tools import _suggest_sender_rules
+        from alteris.mcp_tools.onboarding_tools import _suggest_sender_rules
         _seed_basic_kg(store)
         rules = _suggest_sender_rules(store)
 
@@ -355,7 +355,7 @@ class TestSuggestSenderRules:
         assert "alice@test.com" in patterns
 
     def test_top_senders_get_p1(self, store):
-        from loom.mcp_tools.onboarding_tools import _suggest_sender_rules
+        from alteris.mcp_tools.onboarding_tools import _suggest_sender_rules
         _seed_basic_kg(store)
         rules = _suggest_sender_rules(store)
 
@@ -363,7 +363,7 @@ class TestSuggestSenderRules:
             assert rules[0]["priority"] == "P1"
 
     def test_max_10_suggestions(self, store):
-        from loom.mcp_tools.onboarding_tools import _suggest_sender_rules
+        from alteris.mcp_tools.onboarding_tools import _suggest_sender_rules
         _seed_basic_kg(store)
         rules = _suggest_sender_rules(store)
         assert len(rules) <= 10
@@ -373,7 +373,7 @@ class TestSuggestCategories:
     """Test category suggestions from beliefs."""
 
     def test_default_categories_always_present(self, store):
-        from loom.mcp_tools.onboarding_tools import _suggest_categories
+        from alteris.mcp_tools.onboarding_tools import _suggest_categories
         categories = _suggest_categories(store)
 
         names = [c["name"] for c in categories]
@@ -382,7 +382,7 @@ class TestSuggestCategories:
         assert "finance" in names
 
     def test_categories_with_evidence_ranked_first(self, store):
-        from loom.mcp_tools.onboarding_tools import _suggest_categories
+        from alteris.mcp_tools.onboarding_tools import _suggest_categories
         _seed_basic_kg(store)
         categories = _suggest_categories(store)
 
@@ -390,7 +390,7 @@ class TestSuggestCategories:
         assert categories[0]["kg_evidence_count"] > 0
 
     def test_each_has_icon(self, store):
-        from loom.mcp_tools.onboarding_tools import _suggest_categories
+        from alteris.mcp_tools.onboarding_tools import _suggest_categories
         categories = _suggest_categories(store)
 
         for cat in categories:
@@ -402,11 +402,11 @@ class TestCrossSourceDiscoveries:
     """Test cross-source discovery extraction."""
 
     def test_no_cross_source(self, store):
-        from loom.mcp_tools.onboarding_tools import _get_cross_source_discoveries
+        from alteris.mcp_tools.onboarding_tools import _get_cross_source_discoveries
         assert _get_cross_source_discoveries(store) == []
 
     def test_finds_cross_source_people(self, store):
-        from loom.mcp_tools.onboarding_tools import _get_cross_source_discoveries
+        from alteris.mcp_tools.onboarding_tools import _get_cross_source_discoveries
         _seed_basic_kg(store)
         discoveries = _get_cross_source_discoveries(store)
 
@@ -416,7 +416,7 @@ class TestCrossSourceDiscoveries:
         assert "Alice Chen" in names
 
     def test_discovery_has_description(self, store):
-        from loom.mcp_tools.onboarding_tools import _get_cross_source_discoveries
+        from alteris.mcp_tools.onboarding_tools import _get_cross_source_discoveries
         _seed_basic_kg(store)
         discoveries = _get_cross_source_discoveries(store)
 
@@ -435,30 +435,30 @@ class TestOnboardingToolRegistration:
     """Verify the onboarding tool registers correctly."""
 
     def test_tool_registered(self):
-        from loom.mcp_tools import ensure_tools_loaded, get_tool
+        from alteris.mcp_tools import ensure_tools_loaded, get_tool
         ensure_tools_loaded()
 
-        t = get_tool("loom_onboarding_summary")
+        t = get_tool("alteris_onboarding_summary")
         assert t is not None
         assert t.permission == "read"
 
     def test_tool_in_all_tools(self):
-        from loom.mcp_tools import ensure_tools_loaded, get_all_tools
+        from alteris.mcp_tools import ensure_tools_loaded, get_all_tools
         ensure_tools_loaded()
 
         names = {t.name for t in get_all_tools()}
-        assert "loom_onboarding_summary" in names
+        assert "alteris_onboarding_summary" in names
 
     def test_handler_callable(self):
-        from loom.mcp_tools import ensure_tools_loaded, get_tool
+        from alteris.mcp_tools import ensure_tools_loaded, get_tool
         ensure_tools_loaded()
 
-        t = get_tool("loom_onboarding_summary")
+        t = get_tool("alteris_onboarding_summary")
         assert callable(t.handler)
 
     def test_handler_returns_dict(self, store):
-        from loom.mcp_tools.onboarding_tools import handle_loom_onboarding_summary
-        result = handle_loom_onboarding_summary(store)
+        from alteris.mcp_tools.onboarding_tools import handle_alteris_onboarding_summary
+        result = handle_alteris_onboarding_summary(store)
         assert isinstance(result, dict)
 
 
@@ -471,9 +471,9 @@ class TestOnboardingEndToEnd:
     """Full integration test: seed KG, call summary, validate all sections."""
 
     def test_full_summary_with_data(self, store):
-        from loom.mcp_tools.onboarding_tools import handle_loom_onboarding_summary
+        from alteris.mcp_tools.onboarding_tools import handle_alteris_onboarding_summary
         _seed_basic_kg(store)
-        result = handle_loom_onboarding_summary(store)
+        result = handle_alteris_onboarding_summary(store)
 
         # Stats populated
         assert result["stats"]["total_events"] == 8
@@ -499,9 +499,9 @@ class TestOnboardingEndToEnd:
         assert len(result["cross_source_discoveries"]) >= 1
 
     def test_result_json_serializable(self, store):
-        from loom.mcp_tools.onboarding_tools import handle_loom_onboarding_summary
+        from alteris.mcp_tools.onboarding_tools import handle_alteris_onboarding_summary
         _seed_basic_kg(store)
-        result = handle_loom_onboarding_summary(store)
+        result = handle_alteris_onboarding_summary(store)
 
         # Must be JSON serializable for MCP transport
         serialized = json.dumps(result)

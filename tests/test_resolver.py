@@ -1,4 +1,4 @@
-"""Tests for loom.resolver: Union-find person resolution.
+"""Tests for alteris.resolver: Union-find person resolution.
 
 Tests cover:
   - Phone normalization (various formats)
@@ -25,8 +25,8 @@ import time
 
 import pytest
 
-from loom.models import Event
-from loom.resolver import (
+from alteris.models import Event
+from alteris.resolver import (
     ParsedIdentity,
     ResolvedPerson,
     UnionFind,
@@ -38,7 +38,7 @@ from loom.resolver import (
     persist_persons,
     resolve_persons,
 )
-from loom.store import LayeredGraphStore
+from alteris.store import LayeredGraphStore
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

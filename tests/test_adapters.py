@@ -1,4 +1,4 @@
-"""Tests for loom.adapters: base adapter framework and shared utilities.
+"""Tests for alteris.adapters: base adapter framework and shared utilities.
 
 Tests cover:
   - SourceAdapter abstract interface
@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from loom.adapters import (
+from alteris.adapters import (
     AvailabilityResult,
     IngestResult,
     SchemaResult,
@@ -26,8 +26,8 @@ from loom.adapters import (
     make_source_id_hash,
     row_val,
 )
-from loom.constants import SOURCE_ID_HASH_LEN
-from loom.models import Event
+from alteris.constants import SOURCE_ID_HASH_LEN
+from alteris.models import Event
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -1,4 +1,4 @@
-"""Tests for loom.propagate: Message passing on triage claims (Stage 5).
+"""Tests for alteris.propagate: Message passing on triage claims (Stage 5).
 
 Tests cover:
   - Rule 1: Sender reputation dampening
@@ -20,19 +20,19 @@ import time
 
 import pytest
 
-from loom.constants import (
+from alteris.constants import (
     EVENT_TYPE_EMAIL,
     EVENT_TYPE_MEETING,
     EVENT_TYPE_MESSAGE,
 )
-from loom.models import (
+from alteris.models import (
     Claim,
     Event,
     ExtractionMethod,
     ExtractionProvenance,
     Modality,
 )
-from loom.propagate import (
+from alteris.propagate import (
     MASS_EMAIL_THRESHOLD,
     MEETING_FLOOR,
     MSG_FLOOR_IF_USER_PARTICIPATED,
@@ -55,7 +55,7 @@ from loom.propagate import (
     rule_thread_coherence,
     run_propagation,
 )
-from loom.store import LayeredGraphStore
+from alteris.store import LayeredGraphStore
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

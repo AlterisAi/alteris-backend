@@ -1,10 +1,10 @@
-"""Tests for loom.watcher: Watch daemon + thread-aware incremental processing.
+"""Tests for alteris.watcher: Watch daemon + thread-aware incremental processing.
 
 Tests cover:
   - WatchDaemon debounce behavior
   - Pipeline serialization (rerun flag)
   - Graceful shutdown
-  - LoomFileHandler filtering
+  - AlterisFileHandler filtering
   - Thread-aware incremental triage helpers
   - Thread-aware synthesis helpers
 """
@@ -16,14 +16,14 @@ import time
 
 import pytest
 
-from loom.constants import (
+from alteris.constants import (
     INCREMENTAL_CONTEXT_MESSAGES,
     REACTIVATION_THRESHOLD,
     WATCH_DEBOUNCE_SECONDS,
 )
-from loom.models import Claim, Event, ExtractionProvenance, Modality
-from loom.privacy import SensitivityLevel
-from loom.store import LayeredGraphStore
+from alteris.models import Claim, Event, ExtractionProvenance, Modality
+from alteris.privacy import SensitivityLevel
+from alteris.store import LayeredGraphStore
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -62,7 +62,7 @@ def _make_triage_claim(
     event_id: str, score: float = 0.5, thread_id: str = "",
 ) -> Claim:
     """Helper to create a triage claim for an event."""
-    from loom.triage import triage_claim_id
+    from alteris.triage import triage_claim_id
     return Claim(
         id=triage_claim_id(event_id),
         event_ids=[event_id],
@@ -92,7 +92,7 @@ def _make_thread_triage_claim(
     event_ids: list[str] | None = None,
 ) -> Claim:
     """Helper to create a thread_triage claim."""
-    from loom.triage import thread_triage_claim_id
+    from alteris.triage import thread_triage_claim_id
     return Claim(
         id=thread_triage_claim_id(thread_id),
         event_ids=event_ids or [],
@@ -157,7 +157,7 @@ class TestWatchDaemonDebounce:
 
     def _make_daemon(self, debounce: float = 0.1):
         """Create a daemon with short debounce for testing."""
-        from loom.watcher import WatchDaemon
+        from alteris.watcher import WatchDaemon
 
         args = argparse.Namespace(
             db_path=":memory:", dry_run=True, llm="mock",
@@ -218,7 +218,7 @@ class TestWatchDaemonSerialization:
     """Test pipeline execution serialization."""
 
     def _make_daemon(self):
-        from loom.watcher import WatchDaemon
+        from alteris.watcher import WatchDaemon
 
         args = argparse.Namespace(
             db_path=":memory:", dry_run=True, llm="mock",
@@ -268,18 +268,18 @@ class TestWatchDaemonSerialization:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# LoomFileHandler tests
+# AlterisFileHandler tests
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-class TestLoomFileHandler:
+class TestAlterisFileHandler:
     def test_filters_target_filenames(self):
         from unittest.mock import MagicMock
         from watchdog.events import FileModifiedEvent
 
-        from loom.watcher import LoomFileHandler
+        from alteris.watcher import AlterisFileHandler
 
         callback = MagicMock()
-        handler = LoomFileHandler(
+        handler = AlterisFileHandler(
             "imessage",
             frozenset({"chat.db", "chat.db-wal"}),
             callback,
@@ -300,10 +300,10 @@ class TestLoomFileHandler:
         from unittest.mock import MagicMock
         from watchdog.events import DirModifiedEvent
 
-        from loom.watcher import LoomFileHandler
+        from alteris.watcher import AlterisFileHandler
 
         callback = MagicMock()
-        handler = LoomFileHandler(
+        handler = AlterisFileHandler(
             "mail", frozenset({"Envelope Index"}), callback,
         )
         event = DirModifiedEvent("/path/to/dir")
@@ -314,10 +314,10 @@ class TestLoomFileHandler:
         from unittest.mock import MagicMock
         from watchdog.events import FileModifiedEvent
 
-        from loom.watcher import LoomFileHandler
+        from alteris.watcher import AlterisFileHandler
 
         callback = MagicMock()
-        handler = LoomFileHandler(
+        handler = AlterisFileHandler(
             "imessage",
             frozenset({"chat.db", "chat.db-wal", "chat.db-shm"}),
             callback,
@@ -333,12 +333,12 @@ class TestLoomFileHandler:
 
 class TestGetThreadPriorContext:
     def test_returns_none_for_fresh_thread(self, store):
-        from loom.triage import _get_thread_prior_context
+        from alteris.triage import _get_thread_prior_context
         result = _get_thread_prior_context("thread:123", store)
         assert result is None
 
     def test_returns_data_for_triaged_thread(self, store):
-        from loom.triage import _get_thread_prior_context
+        from alteris.triage import _get_thread_prior_context
 
         claim = _make_thread_triage_claim(
             "thread:123", score=0.7, summary="Important thread",
@@ -354,7 +354,7 @@ class TestGetThreadPriorContext:
         assert result["commitment_type"] == "deadline"
 
     def test_returns_none_for_wrong_claim_type(self, store):
-        from loom.triage import _get_thread_prior_context, thread_triage_claim_id
+        from alteris.triage import _get_thread_prior_context, thread_triage_claim_id
 
         # Insert a claim with the right ID but wrong type
         claim = Claim(
@@ -376,7 +376,7 @@ class TestGetThreadPriorContext:
 
 class TestGetTriagedEventIds:
     def test_empty_for_fresh_events(self, store):
-        from loom.triage import _get_triaged_event_ids
+        from alteris.triage import _get_triaged_event_ids
 
         event = _make_event("evt1")
         store.put_event(event)
@@ -385,7 +385,7 @@ class TestGetTriagedEventIds:
         assert result == set()
 
     def test_finds_triaged_events(self, store):
-        from loom.triage import _get_triaged_event_ids
+        from alteris.triage import _get_triaged_event_ids
 
         event = _make_event("evt1")
         store.put_event(event)
@@ -397,7 +397,7 @@ class TestGetTriagedEventIds:
         assert result == {"evt1"}
 
     def test_excludes_parse_failed(self, store):
-        from loom.triage import _get_triaged_event_ids, triage_claim_id
+        from alteris.triage import _get_triaged_event_ids, triage_claim_id
 
         event = _make_event("evt1")
         store.put_event(event)
@@ -423,7 +423,7 @@ class TestGetTriagedEventIds:
 
 class TestClassifyThreadIncremental:
     def test_fresh_thread(self, store):
-        from loom.triage import classify_thread_incremental
+        from alteris.triage import classify_thread_incremental
 
         events = [{"id": "evt1", "timestamp": int(time.time())}]
         result = classify_thread_incremental(
@@ -432,7 +432,7 @@ class TestClassifyThreadIncremental:
         assert result == "fresh"
 
     def test_incremental_thread(self, store):
-        from loom.triage import classify_thread_incremental
+        from alteris.triage import classify_thread_incremental
 
         # Create a prior triage with score above threshold
         claim = _make_thread_triage_claim("thread:known", score=0.7)
@@ -445,7 +445,7 @@ class TestClassifyThreadIncremental:
         assert result == "incremental"
 
     def test_reactivated_dormant_thread(self, store):
-        from loom.triage import classify_thread_incremental
+        from alteris.triage import classify_thread_incremental
 
         # Create a prior triage with score BELOW threshold
         claim = _make_thread_triage_claim(
@@ -460,7 +460,7 @@ class TestClassifyThreadIncremental:
         assert result == "reactivated"
 
     def test_dormant_with_gate_claim_stays_incremental(self, store):
-        from loom.triage import classify_thread_incremental
+        from alteris.triage import classify_thread_incremental
 
         # Create a prior triage with low score
         claim = _make_thread_triage_claim("thread:gated", score=0.1)
@@ -490,7 +490,7 @@ class TestClassifyThreadIncremental:
 
 class TestBuildIncrementalThreadPrompt:
     def test_includes_prior_context_block(self, store):
-        from loom.triage import build_incremental_thread_prompt
+        from alteris.triage import build_incremental_thread_prompt
 
         now = int(time.time())
         events = [
@@ -528,7 +528,7 @@ class TestBuildIncrementalThreadPrompt:
         assert "awaiting_user" in prompt
 
     def test_marks_messages_new_and_context(self, store):
-        from loom.triage import build_incremental_thread_prompt
+        from alteris.triage import build_incremental_thread_prompt
 
         now = int(time.time())
         events = [
@@ -564,7 +564,7 @@ class TestBuildIncrementalThreadPrompt:
         assert "[NEW]" in prompt
 
     def test_only_requests_scores_for_new(self, store):
-        from loom.triage import build_incremental_thread_prompt
+        from alteris.triage import build_incremental_thread_prompt
 
         now = int(time.time())
         events = [
@@ -605,12 +605,12 @@ class TestBuildIncrementalThreadPrompt:
 
 class TestGetPriorCommitments:
     def test_no_prior_commitments(self, store):
-        from loom.beliefs import _get_prior_commitments
+        from alteris.beliefs import _get_prior_commitments
         result = _get_prior_commitments(store, "thread:new")
         assert result == []
 
     def test_finds_active_commitments(self, store):
-        from loom.beliefs import _get_prior_commitments
+        from alteris.beliefs import _get_prior_commitments
 
         claim = _make_commitment_claim(
             "thread:123", what="send report", deadline="2026-02-20",
@@ -623,7 +623,7 @@ class TestGetPriorCommitments:
         assert result[0]["deadline"] == "2026-02-20"
 
     def test_excludes_superseded(self, store):
-        from loom.beliefs import _get_prior_commitments
+        from alteris.beliefs import _get_prior_commitments
 
         claim = _make_commitment_claim("thread:123", what="old task")
         store.put_claim(claim)
@@ -635,12 +635,12 @@ class TestGetPriorCommitments:
 
 class TestFormatPriorCommitments:
     def test_empty_list(self):
-        from loom.beliefs import _format_prior_commitments
+        from alteris.beliefs import _format_prior_commitments
         result = _format_prior_commitments([])
         assert result == ""
 
     def test_formats_commitments(self):
-        from loom.beliefs import _format_prior_commitments
+        from alteris.beliefs import _format_prior_commitments
 
         prior = [
             {
@@ -669,9 +669,9 @@ class TestFormatPriorCommitments:
 
 class TestBuildSynthesisPromptWithPrior:
     def test_no_prior_no_block(self, store):
-        from loom.beliefs import _build_synthesis_prompt
-        from loom.extract import ThreadBundle
-        from loom.models import Event
+        from alteris.beliefs import _build_synthesis_prompt
+        from alteris.extract import ThreadBundle
+        from alteris.models import Event
 
         events = [Event(
             id="evt1", source="mail", source_id="evt1",
@@ -686,9 +686,9 @@ class TestBuildSynthesisPromptWithPrior:
         assert "KNOWN COMMITMENTS" not in prompt
 
     def test_with_prior_includes_block(self, store):
-        from loom.beliefs import _build_synthesis_prompt
-        from loom.extract import ThreadBundle
-        from loom.models import Event
+        from alteris.beliefs import _build_synthesis_prompt
+        from alteris.extract import ThreadBundle
+        from alteris.models import Event
 
         events = [Event(
             id="evt1", source="mail", source_id="evt1",
@@ -737,7 +737,7 @@ class TestWatcherConstants:
 
 class TestWatchCLI:
     def test_watch_parser_exists(self):
-        from loom.cli import build_parser
+        from alteris.cli import build_parser
         parser = build_parser()
         # --dry-run is a global arg, must come before the subcommand
         args = parser.parse_args(["--dry-run", "watch"])
@@ -745,13 +745,13 @@ class TestWatchCLI:
         assert args.dry_run is True
 
     def test_watch_debounce_arg(self):
-        from loom.cli import build_parser
+        from alteris.cli import build_parser
         parser = build_parser()
         args = parser.parse_args(["watch", "--debounce", "3.0"])
         assert args.debounce == 3.0
 
     def test_watch_poll_intervals(self):
-        from loom.cli import build_parser
+        from alteris.cli import build_parser
         parser = build_parser()
         args = parser.parse_args([
             "watch",
@@ -764,7 +764,7 @@ class TestWatchCLI:
         assert args.poll_granola == 120
 
     def test_watch_sources_filter(self):
-        from loom.cli import build_parser
+        from alteris.cli import build_parser
         parser = build_parser()
         args = parser.parse_args(["watch", "--sources", "mail", "imessage"])
         assert args.sources == ["mail", "imessage"]
@@ -776,7 +776,7 @@ class TestWatchCLI:
 
 class TestRunPipelineStages:
     def test_returns_summary_dict(self):
-        from loom.cli import run_pipeline_stages
+        from alteris.cli import run_pipeline_stages
 
         args = argparse.Namespace(
             db_path=":memory:", dry_run=True, llm="mock",
@@ -798,7 +798,7 @@ class TestRunPipelineStages:
 
 class TestWatchTargets:
     def test_all_sources_have_targets(self):
-        from loom.watcher import WATCH_TARGETS
+        from alteris.watcher import WATCH_TARGETS
         assert "mail" in WATCH_TARGETS
         # iMessage is polled, not watched (macOS suppresses FSEvents for chat.db)
         assert "imessage" not in WATCH_TARGETS
@@ -806,12 +806,12 @@ class TestWatchTargets:
         assert "contacts" in WATCH_TARGETS
 
     def test_target_filenames_are_frozensets(self):
-        from loom.watcher import WATCH_TARGETS
+        from alteris.watcher import WATCH_TARGETS
         for source, (watch_dir, target_files, recursive) in WATCH_TARGETS.items():
             assert isinstance(target_files, frozenset)
 
     def test_poll_sources_have_intervals(self):
-        from loom.watcher import POLL_SOURCES
+        from alteris.watcher import POLL_SOURCES
         assert "imessage" in POLL_SOURCES  # polled because FSEvents unreliable
         assert "calendar" in POLL_SOURCES
         assert "slack" in POLL_SOURCES
@@ -820,7 +820,7 @@ class TestWatchTargets:
             assert interval > 0
 
     def test_source_enabled_filter(self):
-        from loom.watcher import WatchDaemon
+        from alteris.watcher import WatchDaemon
 
         args = argparse.Namespace(
             db_path=":memory:", dry_run=True, llm="mock",
@@ -835,7 +835,7 @@ class TestWatchTargets:
         assert daemon._source_enabled("whatsapp") is False
 
     def test_all_sources_enabled_when_none(self):
-        from loom.watcher import WatchDaemon
+        from alteris.watcher import WatchDaemon
 
         args = argparse.Namespace(
             db_path=":memory:", dry_run=True, llm="mock",
