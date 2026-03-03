@@ -96,7 +96,8 @@ CREATE TABLE IF NOT EXISTS claims (
     user_correction TEXT,
 
     superseded_by   TEXT,
-    created_at      INTEGER NOT NULL
+    created_at      INTEGER NOT NULL,
+    updated_at      INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_claims_subject ON claims(subject);
@@ -482,6 +483,16 @@ class LayeredGraphStore:
                 self._conn.execute(
                     f"ALTER TABLE cq_tasks ADD COLUMN {col_name} {col_type}"
                 )
+
+        # Migrate claims: add updated_at if missing
+        claim_cols = {
+            r["name"]
+            for r in self._conn.execute("PRAGMA table_info(claims)").fetchall()
+        }
+        if "updated_at" not in claim_cols:
+            self._conn.execute(
+                "ALTER TABLE claims ADD COLUMN updated_at INTEGER"
+            )
 
         # Migrate cq_stories: add cluster_hash if missing
         story_cols = {

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,17 @@ class SpendLimitError(Exception):
             f"Daily Gemini spend limit reached (${daily_total:.4f} / ${limit:.2f}). "
             f"To continue, add your own Gemini API key in Settings, or wait until tomorrow."
         )
+
+
+def _parse_retry_delay(exc_str: str) -> float | None:
+    """Extract retryDelay seconds from a Gemini 429 error message."""
+    m = re.search(r"retryDelay.*?(\d+(?:\.\d+)?)\s*s", exc_str, re.IGNORECASE)
+    if m:
+        return float(m.group(1))
+    m = re.search(r"retry in (\d+(?:\.\d+)?)\s*s", exc_str, re.IGNORECASE)
+    if m:
+        return float(m.group(1))
+    return None
 
 
 class DailyQuotaExhaustedError(Exception):
@@ -84,8 +96,8 @@ class GeminiClient(LLMClient):
             key = load_config().get("gemini_api_key", "")
 
         if not key:
-            # Try macOS Keychain (same service name as legacy alteris-listener)
-            for service in ("alteris-listener", "loom"):
+            # Try macOS Keychain (app stores under ai.alteris.app)
+            for service in ("ai.alteris.app", "alteris-listener", "loom"):
                 try:
                     result = subprocess.run(
                         ["security", "find-generic-password",
@@ -421,8 +433,9 @@ class GeminiClient(LLMClient):
                     or "429" in exc_str or "resource_exhausted" in exc_str
                 )
                 if attempt < max_retries and is_retryable:
-                    wait = 2 ** attempt  # 1s, 2s, 4s
-                    logger.warning("Gemini generate retryable error (attempt %d/%d), waiting %ds: %s", attempt + 1, max_retries + 1, wait, exc)
+                    server_delay = _parse_retry_delay(str(exc))
+                    wait = min(server_delay or (2 ** attempt), 60)
+                    logger.warning("Gemini generate retryable error (attempt %d/%d), waiting %.0fs: %s", attempt + 1, max_retries + 1, wait, exc)
                     import time
                     time.sleep(wait)
                     self._client = None
@@ -517,8 +530,9 @@ class GeminiClient(LLMClient):
                     or "429" in exc_str or "resource_exhausted" in exc_str
                 )
                 if attempt < max_retries and is_retryable:
-                    wait = 2 ** attempt
-                    logger.warning("Gemini async retryable error (attempt %d/%d), waiting %ds: %s", attempt + 1, max_retries + 1, wait, exc)
+                    server_delay = _parse_retry_delay(str(exc))
+                    wait = min(server_delay or (2 ** attempt), 60)
+                    logger.warning("Gemini async retryable error (attempt %d/%d), waiting %.0fs: %s", attempt + 1, max_retries + 1, wait, exc)
                     import asyncio
                     await asyncio.sleep(wait)
                     self._async_client = None
@@ -610,8 +624,9 @@ class GeminiClient(LLMClient):
                     or "429" in exc_str or "resource_exhausted" in exc_str
                 )
                 if attempt < max_retries and is_retryable:
-                    wait = 2 ** attempt
-                    logger.warning("Gemini chat retryable error (attempt %d/%d), waiting %ds: %s", attempt + 1, max_retries + 1, wait, exc)
+                    server_delay = _parse_retry_delay(str(exc))
+                    wait = min(server_delay or (2 ** attempt), 60)
+                    logger.warning("Gemini chat retryable error (attempt %d/%d), waiting %.0fs: %s", attempt + 1, max_retries + 1, wait, exc)
                     import time
                     time.sleep(wait)
                     self._client = None

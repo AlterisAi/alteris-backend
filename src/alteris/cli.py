@@ -2304,9 +2304,13 @@ def _check_first_run_config() -> None:
     if cfg.get("gemini_api_key"):
         return  # Good to go
 
+    # Also check environment variables (app passes keys via env)
+    if os.environ.get("GEMINI_API_KEY"):
+        return
+
     # Also check Keychain (where the bundled app stores it)
     import subprocess
-    for service in ("alteris-listener", "loom"):
+    for service in ("ai.alteris.app", "alteris-listener", "loom"):
         try:
             result = subprocess.run(
                 ["security", "find-generic-password", "-a", "gemini", "-s", service, "-w"],
@@ -2334,8 +2338,7 @@ def _check_first_run_config() -> None:
     print()
     print("  The file should look like:")
     print('    {')
-    print('      "gemini_api_key": "your-key-here",')
-    print('      "anthropic_api_key": "your-key-here"')
+    print('      "gemini_api_key": "your-key-here"')
     print('    }')
     print()
     sys.exit(1)
@@ -2368,8 +2371,11 @@ def main() -> None:
         parser.print_help()
         sys.exit(1)
 
-    # First-run: prompt for API keys if config is missing
-    _check_first_run_config()
+    # First-run: prompt for API keys if config is missing.
+    # Skip for commands that don't need API keys (MCP server, stats, etc.)
+    no_key_commands = {"mcp-server", "stats", "graph-ls", "detect-me-card", "person-model-answer"}
+    if args.command not in no_key_commands:
+        _check_first_run_config()
 
     # Run the command
     args.func(args)

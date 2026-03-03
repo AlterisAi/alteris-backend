@@ -51,6 +51,7 @@ from alteris.constants import (
     EVENT_TYPE_MEETING,
     INCREMENTAL_CONTEXT_MESSAGES,
     MAX_BODY_CHARS,
+    MAX_THREAD_FETCH,
     MSG_BATCH_SIZE,
     MSG_COMPACT_MAX_OUTPUT_TOKENS,
     REACTIVATION_THRESHOLD,
@@ -1558,22 +1559,29 @@ def classify_thread_incremental(
 def _fetch_all_thread_events(
     thread_id: str,
     store: LayeredGraphStore,
+    limit: int = MAX_THREAD_FETCH,
 ) -> list[dict]:
-    """Fetch ALL events for a thread from the store.
+    """Fetch the most recent events for a thread from the store.
 
-    Used for incremental triage to provide context alongside new messages.
+    Returns the *tail* (most recent ``limit`` events, default 500) in
+    chronological order.  Older messages beyond the cap are dropped —
+    for a 4 000-message WhatsApp group we only need the recent tail for
+    triage context, not years of chat history.
     """
     rows = store.conn.execute(
-        """SELECT e.* FROM events e
-           WHERE e.id IN (
-               SELECT ce.event_id FROM claim_events ce
-               JOIN claims c ON ce.claim_id = c.id
-               WHERE c.claim_type = 'thread_triage'
-                 AND c.subject = ?
-           )
-           OR json_extract(e.metadata, '$.thread_id') = ?
-           ORDER BY e.timestamp ASC""",
-        (thread_id, thread_id),
+        """SELECT * FROM (
+               SELECT e.* FROM events e
+               WHERE e.id IN (
+                   SELECT ce.event_id FROM claim_events ce
+                   JOIN claims c ON ce.claim_id = c.id
+                   WHERE c.claim_type = 'thread_triage'
+                     AND c.subject = ?
+               )
+               OR json_extract(e.metadata, '$.thread_id') = ?
+               ORDER BY e.timestamp DESC
+               LIMIT ?
+           ) sub ORDER BY sub.timestamp ASC""",
+        (thread_id, thread_id, limit),
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -2526,7 +2534,7 @@ def run_triage(
                 )
 
                 if classification == "reactivated":
-                    # Fetch ALL thread events for full reprocessing
+                    # Fetch recent thread events for reprocessing (capped)
                     all_events = _fetch_all_thread_events(
                         thread_id, store,
                     )
@@ -2534,8 +2542,8 @@ def run_triage(
                         thread_events = all_events
                     stats["reactivated"] += 1
                     logger.info(
-                        "Thread %s reactivated (%d events for full reprocess)",
-                        thread_id[:30], len(thread_events),
+                        "Thread %s reactivated (%d events, capped to %d)",
+                        thread_id[:30], len(thread_events), MAX_THREAD_FETCH,
                     )
                 else:
                     # Fetch recent events for incremental context

@@ -522,8 +522,11 @@ REACTIVATION_THRESHOLD = 0.3
 """Prior thread score below which a thread is considered 'dormant'.
 New messages in dormant threads trigger full reprocessing."""
 
-INCREMENTAL_CONTEXT_MESSAGES = 10
+INCREMENTAL_CONTEXT_MESSAGES = 75
 """Number of most recent messages to include in incremental triage prompts."""
+
+MAX_THREAD_FETCH = 500
+"""Max events to fetch from a thread for triage (tail, most recent)."""
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # VC intelligence gathering
