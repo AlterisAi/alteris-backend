@@ -1382,7 +1382,7 @@ def run_extraction(
     min_score: float = EXTRACTION_MIN_SCORE,
     limit: int | None = None,
     force: bool = False,
-    max_concurrent: int = 100,
+    max_concurrent: int = 10,
     profile_context: str = "",
 ) -> dict[str, Any]:
     """Run Stage 6 binary gate on triaged events.

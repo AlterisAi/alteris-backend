@@ -2316,118 +2316,143 @@ async def _async_triage_one_thread(
       2. Incremental: known thread with new messages, augmented prompt
       3. Large thread: chunked (overlapping windows, merge results)
 
+    The THREAD_TIMEOUT is applied *after* acquiring the semaphore so that
+    queue wait time does not count against a thread's processing budget.
+
     Args:
         prior_context: Prior thread_triage data for incremental mode.
         all_thread_events: ALL thread events (new + old) for incremental context.
     """
     async with semaphore:
-        n_msgs = len(thread_events)
-        model_id, max_output = _model_for_thread(thread_id, n_msgs)
+        return await asyncio.wait_for(
+            _async_triage_one_thread_inner(
+                thread_id, thread_events, store, sender_cache,
+                llm_client, now, prior_context, all_thread_events,
+                profile_context,
+            ),
+            timeout=THREAD_TIMEOUT,
+        )
 
-        # Incremental mode: known thread with prior context
-        if prior_context is not None and all_thread_events is not None:
-            new_ids = {e["id"] for e in thread_events}
-            triaged_ids = {e["id"] for e in all_thread_events if e["id"] not in new_ids}
 
-            logger.info(
-                "Incremental triage for %s: %d all events, %d new [%s]",
-                thread_id[:30], len(all_thread_events), len(new_ids), model_id,
-            )
+async def _async_triage_one_thread_inner(
+    thread_id: str,
+    thread_events: list[dict],
+    store: LayeredGraphStore,
+    sender_cache: dict[str, dict[str, Any]],
+    llm_client: LLMClient,
+    now: int,
+    prior_context: dict[str, Any] | None = None,
+    all_thread_events: list[dict] | None = None,
+    profile_context: str = "",
+) -> tuple[str, ThreadTriageResult | None]:
+    """Inner processing logic — called with semaphore held and timeout applied."""
+    n_msgs = len(thread_events)
+    model_id, max_output = _model_for_thread(thread_id, n_msgs)
 
-            triage_prompt = build_incremental_thread_prompt(
-                thread_id, all_thread_events, triaged_ids,
-                prior_context, store, sender_cache, now,
+    # Incremental mode: known thread with prior context
+    if prior_context is not None and all_thread_events is not None:
+        new_ids = {e["id"] for e in thread_events}
+        triaged_ids = {e["id"] for e in all_thread_events if e["id"] not in new_ids}
+
+        logger.info(
+            "Incremental triage for %s: %d all events, %d new [%s]",
+            thread_id[:30], len(all_thread_events), len(new_ids), model_id,
+        )
+
+        triage_prompt = build_incremental_thread_prompt(
+            thread_id, all_thread_events, triaged_ids,
+            prior_context, store, sender_cache, now,
+            profile_context,
+        )
+    elif n_msgs > LARGE_THREAD_THRESHOLD:
+        # Chunked triage: split into overlapping windows, triage each
+        chunks = _chunk_thread(thread_events)
+        t_start = time.time()
+        logger.info(
+            "Chunked triage for %s: %d msgs -> %d chunks of ~%d [%s]",
+            thread_id[:30], n_msgs, len(chunks), CHUNK_SIZE, model_id,
+        )
+
+        chunk_results: list[ThreadTriageResult | None] = []
+        for i, chunk in enumerate(chunks):
+            t_chunk = time.time()
+            chunk_ids = [e["id"] for e in chunk]
+            chunk_prompt = build_thread_full_prompt(
+                thread_id, chunk, store, sender_cache, now,
                 profile_context,
             )
-        elif n_msgs > LARGE_THREAD_THRESHOLD:
-            # Chunked triage: split into overlapping windows, triage each
-            chunks = _chunk_thread(thread_events)
-            t_start = time.time()
+            try:
+                chunk_raw = await asyncio.wait_for(
+                    llm_client.agenerate(
+                        prompt=chunk_prompt,
+                        system=THREAD_FULL_SYSTEM,
+                        model=model_id,
+                        temperature=0.1,
+                        max_tokens=max_output,
+                        format_json=True,
+                        cache_system=True,
+                    ),
+                    timeout=ASYNC_CALL_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Chunk %d/%d timed out after %ds for %s", i + 1, len(chunks), ASYNC_CALL_TIMEOUT, thread_id[:30])
+                chunk_raw = None
+            chunk_result = parse_thread_triage_response(
+                chunk_raw or "", thread_id, chunk_ids,
+                strategy=TriageStrategy.THREAD_FULL,
+                model_id=model_id,
+            )
+            chunk_results.append(chunk_result)
+            chunk_elapsed = time.time() - t_chunk
+            ok = "ok" if chunk_raw else "FAILED"
             logger.info(
-                "Chunked triage for %s: %d msgs -> %d chunks of ~%d [%s]",
-                thread_id[:30], n_msgs, len(chunks), CHUNK_SIZE, model_id,
+                "  chunk %d/%d (%d msgs) -> %.1fs [%s]",
+                i + 1, len(chunks), len(chunk), chunk_elapsed, ok,
+            )
+            print(
+                f"    {thread_id[:25]} chunk {i+1}/{len(chunks)} "
+                f"({len(chunk)} msgs) -> {chunk_elapsed:.0f}s [{ok}]",
+                flush=True,
             )
 
-            chunk_results: list[ThreadTriageResult | None] = []
-            for i, chunk in enumerate(chunks):
-                t_chunk = time.time()
-                chunk_ids = [e["id"] for e in chunk]
-                chunk_prompt = build_thread_full_prompt(
-                    thread_id, chunk, store, sender_cache, now,
-                    profile_context,
-                )
-                try:
-                    chunk_raw = await asyncio.wait_for(
-                        llm_client.agenerate(
-                            prompt=chunk_prompt,
-                            system=THREAD_FULL_SYSTEM,
-                            model=model_id,
-                            temperature=0.1,
-                            max_tokens=max_output,
-                            format_json=True,
-                            cache_system=True,
-                        ),
-                        timeout=ASYNC_CALL_TIMEOUT,
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning("Chunk %d/%d timed out after %ds for %s", i + 1, len(chunks), ASYNC_CALL_TIMEOUT, thread_id[:30])
-                    chunk_raw = None
-                chunk_result = parse_thread_triage_response(
-                    chunk_raw or "", thread_id, chunk_ids,
-                    strategy=TriageStrategy.THREAD_FULL,
-                    model_id=model_id,
-                )
-                chunk_results.append(chunk_result)
-                chunk_elapsed = time.time() - t_chunk
-                ok = "ok" if chunk_raw else "FAILED"
-                logger.info(
-                    "  chunk %d/%d (%d msgs) -> %.1fs [%s]",
-                    i + 1, len(chunks), len(chunk), chunk_elapsed, ok,
-                )
-                print(
-                    f"    {thread_id[:25]} chunk {i+1}/{len(chunks)} "
-                    f"({len(chunk)} msgs) -> {chunk_elapsed:.0f}s [{ok}]",
-                    flush=True,
-                )
-
-            result = _merge_chunk_results(chunk_results, chunks)
-            logger.info(
-                "Chunked triage %s: %d msgs, %d chunks, %.1fs total (%.1fs/chunk avg)",
-                thread_id[:30], n_msgs, len(chunks),
-                time.time() - t_start, (time.time() - t_start) / len(chunks),
-            )
-            return thread_id, result
-        else:
-            # Standard single-pass
-            triage_prompt = build_thread_full_prompt(
-                thread_id, thread_events, store, sender_cache, now,
-                profile_context,
-            )
-
-        try:
-            raw = await asyncio.wait_for(
-                llm_client.agenerate(
-                    prompt=triage_prompt,
-                    system=THREAD_FULL_SYSTEM,
-                    model=model_id,
-                    temperature=0.1,
-                    max_tokens=max_output,
-                    format_json=True,
-                    cache_system=True,
-                ),
-                timeout=ASYNC_CALL_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            logger.warning("Thread triage timed out after %ds for %s", ASYNC_CALL_TIMEOUT, thread_id[:30])
-            raw = None
-
-        event_ids = [e["id"] for e in thread_events]
-        result = parse_thread_triage_response(
-            raw or "", thread_id, event_ids,
-            strategy=TriageStrategy.THREAD_FULL,
-            model_id=model_id,
+        result = _merge_chunk_results(chunk_results, chunks)
+        logger.info(
+            "Chunked triage %s: %d msgs, %d chunks, %.1fs total (%.1fs/chunk avg)",
+            thread_id[:30], n_msgs, len(chunks),
+            time.time() - t_start, (time.time() - t_start) / len(chunks),
         )
         return thread_id, result
+    else:
+        # Standard single-pass
+        triage_prompt = build_thread_full_prompt(
+            thread_id, thread_events, store, sender_cache, now,
+            profile_context,
+        )
+
+    try:
+        raw = await asyncio.wait_for(
+            llm_client.agenerate(
+                prompt=triage_prompt,
+                system=THREAD_FULL_SYSTEM,
+                model=model_id,
+                temperature=0.1,
+                max_tokens=max_output,
+                format_json=True,
+                cache_system=True,
+            ),
+            timeout=ASYNC_CALL_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Thread triage timed out after %ds for %s", ASYNC_CALL_TIMEOUT, thread_id[:30])
+        raw = None
+
+    event_ids = [e["id"] for e in thread_events]
+    result = parse_thread_triage_response(
+        raw or "", thread_id, event_ids,
+        strategy=TriageStrategy.THREAD_FULL,
+        model_id=model_id,
+    )
+    return thread_id, result
 
 
 def run_triage(
@@ -2580,20 +2605,22 @@ def run_triage(
         )
 
         async def _safe_triage_thread(tid, tevts, sem, prior, all_evts):
-            """Wrap thread triage with overall timeout so one hung thread can't block."""
+            """Wrap thread triage with overall timeout so one hung thread can't block.
+
+            The timeout only starts once the semaphore is acquired — queue
+            wait time does NOT count.  This prevents small threads from
+            timing out while stuck behind slow chunked threads.
+            """
             nonlocal _completed_count, _failed_count, _timed_out_count
             label = tid[:30]
             n = len(tevts)
             _in_flight.add(label)
             try:
-                result = await asyncio.wait_for(
-                    _async_triage_one_thread(
-                        tid, tevts, store, sender_cache, llm_client, now, sem,
-                        prior_context=prior,
-                        all_thread_events=all_evts,
-                        profile_context=profile_context,
-                    ),
-                    timeout=THREAD_TIMEOUT,
+                result = await _async_triage_one_thread(
+                    tid, tevts, store, sender_cache, llm_client, now, sem,
+                    prior_context=prior,
+                    all_thread_events=all_evts,
+                    profile_context=profile_context,
                 )
                 if result[1] is None:
                     _failed_count += 1
