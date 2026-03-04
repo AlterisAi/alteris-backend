@@ -3588,7 +3588,7 @@ def run_synthesis(
     model: str = "",
     lite_model: str = "",
     batch_size: int = SYNTHESIS_BATCH_SIZE,
-    max_concurrent: int = 100,
+    max_concurrent: int = 10,
     user_email: str = "",
     profile_context: str = "",
 ) -> dict[str, Any]:
