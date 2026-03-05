@@ -607,12 +607,12 @@ def verify_clusters_with_llm(
     store: LayeredGraphStore | None = None,
     batch_size: int = 10,
     save_path: str | None = None,
-    max_concurrency: int = 50,
+    max_concurrency: int = 10,
 ) -> list[dict]:
     """Send candidate clusters to LLM for merge/split/reject verification.
 
     Fires all batches concurrently via asyncio (up to max_concurrency at once).
-    Gemini Flash Tier 1 allows 1000 RPM — 50 concurrent is well within limits.
+    Capped at 10 to stay within Gemini rate limits and avoid 429 cascades.
     """
     from alteris.constants import CLOUD_FAST_MODEL
 
@@ -646,40 +646,46 @@ def verify_clusters_with_llm(
     raw_responses: list[str | None] = [None] * len(batches)
     batch_results: list[list[dict]] = [[] for _ in range(len(batches))]
 
-    async def _call_batch(idx: int, batch_start: int, prompt: str, sem: asyncio.Semaphore) -> None:
-        async with sem:
-            for retry in range(3):
-                try:
-                    response = await llm_client.agenerate(
-                        prompt=prompt,
-                        model=CLOUD_FAST_MODEL,
-                        temperature=0.1,
-                        max_tokens=8192,
-                        response_schema=schema,
-                    )
-                    if not response:
-                        continue
-                    raw_responses[idx] = response
-                    results = json.loads(response.strip())
-                    if not isinstance(results, list):
-                        results = [results]
-                    batch_results[idx] = results
-                    return
-                except Exception as exc:
-                    logger.warning("LLM dedup batch %d retry %d: %s", batch_start, retry, exc)
-            # All retries failed — reject all groups in this batch
-            batch = clusters[batch_start:batch_start + batch_size]
-            batch_results[idx] = [
-                {"group": batch_start + i + 1, "action": "reject"}
-                for i in range(len(batch))
-            ]
+    async def _call_batch(idx: int, batch_start: int, prompt: str) -> None:
+        for retry in range(3):
+            try:
+                response = await llm_client.agenerate(
+                    prompt=prompt,
+                    model=CLOUD_FAST_MODEL,
+                    temperature=0.1,
+                    max_tokens=8192,
+                    response_schema=schema,
+                )
+                if not response:
+                    continue
+                raw_responses[idx] = response
+                results = json.loads(response.strip())
+                if not isinstance(results, list):
+                    results = [results]
+                batch_results[idx] = results
+                return
+            except Exception as exc:
+                logger.warning("LLM dedup batch %d retry %d: %s", batch_start, retry, exc)
+        # All retries failed — reject all groups in this batch
+        batch = clusters[batch_start:batch_start + batch_size]
+        batch_results[idx] = [
+            {"group": batch_start + i + 1, "action": "reject"}
+            for i in range(len(batch))
+        ]
 
     async def _run_all() -> None:
-        sem = asyncio.Semaphore(max_concurrency)
         await asyncio.gather(*[
-            _call_batch(idx, batch_start, prompt, sem)
+            _call_batch(idx, batch_start, prompt)
             for idx, (batch_start, prompt) in enumerate(batches)
         ])
+        # Close the async client before asyncio.run() tears down the loop,
+        # otherwise GC calls aclose() on a dead loop → "Event loop is closed"
+        if hasattr(llm_client, '_async_client') and llm_client._async_client is not None:
+            try:
+                await llm_client._async_client.aio.aclose()
+            except Exception:
+                pass
+            llm_client._async_client = None
 
     asyncio.run(_run_all())
 

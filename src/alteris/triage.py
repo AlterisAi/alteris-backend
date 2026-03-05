@@ -88,16 +88,8 @@ logger = logging.getLogger(__name__)
 
 PROMPT_VERSION = "triage_v4.0"
 
-# Threads above this size get chunked triage: split into overlapping
-# chunks, triage each independently, merge results (keep highest score).
-LARGE_THREAD_THRESHOLD = 200
-
-# How many recent messages to keep verbatim in Pass 2 (legacy, used as fallback)
-LARGE_THREAD_TAIL_SIZE = 100
-
-# Chunked triage: split large threads into overlapping windows
-CHUNK_SIZE = 100        # messages per chunk
-CHUNK_OVERLAP = 20      # overlap between consecutive chunks
+# All threads use single-prompt triage (up to MAX_THREAD_FETCH=500 msgs).
+# No chunking — benchmark showed 500 single-prompt is faster and higher quality.
 
 # For threads with more messages than this, only ask the model to score
 # the most recent N messages. Older messages still provide context in
@@ -395,8 +387,10 @@ def group_events_by_thread(events: list[dict]) -> dict[str, list[dict]]:
         elif source == "calendar":
             ts = e["timestamp"]
             tz = safe_timezone()
-            day = datetime.fromtimestamp(ts, tz=tz).strftime("%Y-%m-%d")
-            groups[f"calendar:{day}"].append(e)
+            dt = datetime.fromtimestamp(ts, tz=tz)
+            # Group by ISO week (YYYY-Www) to batch ~5-7 events per thread
+            week = dt.strftime("%G-W%V")
+            groups[f"calendar:{week}"].append(e)
         elif thread_id:
             groups[thread_id].append(e)
         else:
@@ -707,84 +701,6 @@ def _compact_thread_for_budget(
     )
     return kept
 
-
-def _chunk_thread(events: list[dict]) -> list[list[dict]]:
-    """Split a large thread into overlapping chunks for independent triage.
-
-    Each chunk is CHUNK_SIZE messages. Consecutive chunks overlap by
-    CHUNK_OVERLAP messages so the LLM has boundary context.
-    """
-    n = len(events)
-    if n <= CHUNK_SIZE:
-        return [events]
-
-    chunks: list[list[dict]] = []
-    step = CHUNK_SIZE - CHUNK_OVERLAP
-    for start in range(0, n, step):
-        end = min(start + CHUNK_SIZE, n)
-        chunks.append(events[start:end])
-        if end >= n:
-            break
-    return chunks
-
-
-def _merge_chunk_results(
-    chunk_results: list[ThreadTriageResult | None],
-    chunks: list[list[dict]],
-) -> ThreadTriageResult | None:
-    """Merge triage results from overlapping chunks.
-
-    For messages appearing in multiple chunks (the overlap zone),
-    keep the result with the highest score. Thread-level fields
-    are taken from the chunk with the highest thread_score.
-    """
-    valid = [
-        (r, c) for r, c in zip(chunk_results, chunks) if r is not None
-    ]
-    if not valid:
-        return None
-
-    # Pick the best chunk for thread-level fields
-    best_result, _ = max(valid, key=lambda rc: rc[0].thread_score)
-
-    # Merge per-message scores: for overlapping IDs keep highest
-    merged_scores: dict[str, MessageScore] = {}
-    merged_candidates: set[str] = set()
-    all_pii: set[str] = set()
-    all_sensitivity: set[str] = set()
-    all_spheres: set[str] = set()
-    all_specific: set[str] = set()
-
-    for result, chunk_events in valid:
-        chunk_ids = {e["id"] for e in chunk_events}
-        all_pii.update(result.pii)
-        all_sensitivity.update(result.sensitivity)
-        all_spheres.update(result.universal_spheres)
-        all_specific.update(result.specific_topics)
-        merged_candidates.update(result.extraction_candidates)
-
-        for ms in result.message_scores:
-            existing = merged_scores.get(ms.id)
-            if existing is None or ms.score > existing.score:
-                merged_scores[ms.id] = ms
-
-    return ThreadTriageResult(
-        thread_id=best_result.thread_id,
-        thread_score=best_result.thread_score,
-        domain=best_result.domain,
-        universal_spheres=list(all_spheres)[:3],
-        specific_topics=list(all_specific)[:5],
-        thread_status=best_result.thread_status,
-        relationship=best_result.relationship,
-        thread_summary=best_result.thread_summary,
-        message_scores=list(merged_scores.values()),
-        extraction_candidates=list(merged_candidates),
-        pii=list(all_pii),
-        sensitivity=list(all_sensitivity),
-        commitment_type=best_result.commitment_type,
-        strategy=best_result.strategy,
-        model_id=best_result.model_id,
-    )
 
 
 def build_thread_full_prompt(
@@ -1583,6 +1499,24 @@ def _fetch_all_thread_events(
            ) sub ORDER BY sub.timestamp ASC""",
         (thread_id, thread_id, limit),
     ).fetchall()
+    if len(rows) >= limit:
+        # Count total to show how much was truncated
+        total = store.conn.execute(
+            """SELECT COUNT(*) FROM events e
+               WHERE e.id IN (
+                   SELECT ce.event_id FROM claim_events ce
+                   JOIN claims c ON ce.claim_id = c.id
+                   WHERE c.claim_type = 'thread_triage'
+                     AND c.subject = ?
+               )
+               OR json_extract(e.metadata, '$.thread_id') = ?""",
+            (thread_id, thread_id),
+        ).fetchone()[0]
+        print(
+            f"    Thread {thread_id[:40]}: {total} msgs total, "
+            f"truncated to {limit} most recent",
+            flush=True,
+        )
     return [dict(r) for r in rows]
 
 
@@ -2066,12 +2000,9 @@ def _triage_thread_full(
     now: int,
     profile_context: str = "",
 ) -> ThreadTriageResult | None:
-    """Execute THREAD_FULL triage: full thread via Gemini.
+    """Execute THREAD_FULL triage: full thread via Gemini (single prompt).
 
-    For threads > LARGE_THREAD_THRESHOLD messages, uses chunked triage:
-    split into overlapping chunks of CHUNK_SIZE with CHUNK_OVERLAP,
-    triage each independently, merge results (keep highest score per message).
-
+    All messages (up to MAX_THREAD_FETCH=500) go in one prompt.
     For granola transcripts that exceed the token budget, splits by
     markdown sections and triages each section independently.
     """
@@ -2087,50 +2018,6 @@ def _triage_thread_full(
                 thread_id, events[0], store, sender_cache, llm_client, now,
                 profile_context,
             )
-
-    if n_msgs > LARGE_THREAD_THRESHOLD:
-        chunks = _chunk_thread(events)
-        t_start = time.time()
-        logger.info(
-            "Chunked triage for %s: %d msgs -> %d chunks of ~%d [%s]",
-            thread_id[:30], n_msgs, len(chunks), CHUNK_SIZE, model_id,
-        )
-
-        chunk_results: list[ThreadTriageResult | None] = []
-        for i, chunk in enumerate(chunks):
-            t_chunk = time.time()
-            chunk_ids = [e["id"] for e in chunk]
-            prompt = build_thread_full_prompt(
-                thread_id, chunk, store, sender_cache, now,
-                profile_context,
-            )
-            raw = llm_client.generate(
-                prompt=prompt,
-                system=THREAD_FULL_SYSTEM,
-                model=model_id,
-                temperature=0.1,
-                max_tokens=max_output,
-                format_json=True,
-                cache_system=True,
-            )
-            result = parse_thread_triage_response(
-                raw or "", thread_id, chunk_ids,
-                strategy=TriageStrategy.THREAD_FULL,
-                model_id=model_id,
-            )
-            chunk_results.append(result)
-            logger.info(
-                "  chunk %d/%d (%d msgs) -> %.1fs",
-                i + 1, len(chunks), len(chunk), time.time() - t_chunk,
-            )
-
-        merged = _merge_chunk_results(chunk_results, chunks)
-        logger.info(
-            "Chunked triage %s: %d msgs, %d chunks, %.1fs total (%.1fs/chunk avg)",
-            thread_id[:30], n_msgs, len(chunks),
-            time.time() - t_start, (time.time() - t_start) / len(chunks),
-        )
-        return merged
 
     t_start = time.time()
     prompt = build_thread_full_prompt(
@@ -2304,34 +2191,28 @@ async def _async_triage_one_thread(
     sender_cache: dict[str, dict[str, Any]],
     llm_client: LLMClient,
     now: int,
-    semaphore: asyncio.Semaphore,
     prior_context: dict[str, Any] | None = None,
     all_thread_events: list[dict] | None = None,
     profile_context: str = "",
+    on_status: "callable | None" = None,
 ) -> tuple[str, ThreadTriageResult | None]:
-    """Triage a single thread via Gemini, with concurrency limit.
+    """Triage a single thread via Gemini (single prompt, up to 500 msgs).
 
-    Supports three modes:
+    Supports two modes:
       1. Standard: fresh thread, full triage
       2. Incremental: known thread with new messages, augmented prompt
-      3. Large thread: chunked (overlapping windows, merge results)
 
-    The THREAD_TIMEOUT is applied *after* acquiring the semaphore so that
-    queue wait time does not count against a thread's processing budget.
-
-    Args:
-        prior_context: Prior thread_triage data for incremental mode.
-        all_thread_events: ALL thread events (new + old) for incremental context.
+    Concurrency is controlled by the GeminiClient's built-in semaphore.
+    THREAD_TIMEOUT prevents any single thread from running indefinitely.
     """
-    async with semaphore:
-        return await asyncio.wait_for(
-            _async_triage_one_thread_inner(
-                thread_id, thread_events, store, sender_cache,
-                llm_client, now, prior_context, all_thread_events,
-                profile_context,
-            ),
-            timeout=THREAD_TIMEOUT,
-        )
+    return await asyncio.wait_for(
+        _async_triage_one_thread_inner(
+            thread_id, thread_events, store, sender_cache,
+            llm_client, now, prior_context, all_thread_events,
+            profile_context, on_status,
+        ),
+        timeout=THREAD_TIMEOUT,
+    )
 
 
 async def _async_triage_one_thread_inner(
@@ -2344,10 +2225,14 @@ async def _async_triage_one_thread_inner(
     prior_context: dict[str, Any] | None = None,
     all_thread_events: list[dict] | None = None,
     profile_context: str = "",
+    on_status: "callable | None" = None,
 ) -> tuple[str, ThreadTriageResult | None]:
-    """Inner processing logic — called with semaphore held and timeout applied."""
+    """Inner processing logic — called with timeout applied."""
     n_msgs = len(thread_events)
     model_id, max_output = _model_for_thread(thread_id, n_msgs)
+
+    if on_status:
+        on_status("building_prompt")
 
     # Incremental mode: known thread with prior context
     if prior_context is not None and all_thread_events is not None:
@@ -2364,64 +2249,6 @@ async def _async_triage_one_thread_inner(
             prior_context, store, sender_cache, now,
             profile_context,
         )
-    elif n_msgs > LARGE_THREAD_THRESHOLD:
-        # Chunked triage: split into overlapping windows, triage each
-        chunks = _chunk_thread(thread_events)
-        t_start = time.time()
-        logger.info(
-            "Chunked triage for %s: %d msgs -> %d chunks of ~%d [%s]",
-            thread_id[:30], n_msgs, len(chunks), CHUNK_SIZE, model_id,
-        )
-
-        chunk_results: list[ThreadTriageResult | None] = []
-        for i, chunk in enumerate(chunks):
-            t_chunk = time.time()
-            chunk_ids = [e["id"] for e in chunk]
-            chunk_prompt = build_thread_full_prompt(
-                thread_id, chunk, store, sender_cache, now,
-                profile_context,
-            )
-            try:
-                chunk_raw = await asyncio.wait_for(
-                    llm_client.agenerate(
-                        prompt=chunk_prompt,
-                        system=THREAD_FULL_SYSTEM,
-                        model=model_id,
-                        temperature=0.1,
-                        max_tokens=max_output,
-                        format_json=True,
-                        cache_system=True,
-                    ),
-                    timeout=ASYNC_CALL_TIMEOUT,
-                )
-            except asyncio.TimeoutError:
-                logger.warning("Chunk %d/%d timed out after %ds for %s", i + 1, len(chunks), ASYNC_CALL_TIMEOUT, thread_id[:30])
-                chunk_raw = None
-            chunk_result = parse_thread_triage_response(
-                chunk_raw or "", thread_id, chunk_ids,
-                strategy=TriageStrategy.THREAD_FULL,
-                model_id=model_id,
-            )
-            chunk_results.append(chunk_result)
-            chunk_elapsed = time.time() - t_chunk
-            ok = "ok" if chunk_raw else "FAILED"
-            logger.info(
-                "  chunk %d/%d (%d msgs) -> %.1fs [%s]",
-                i + 1, len(chunks), len(chunk), chunk_elapsed, ok,
-            )
-            print(
-                f"    {thread_id[:25]} chunk {i+1}/{len(chunks)} "
-                f"({len(chunk)} msgs) -> {chunk_elapsed:.0f}s [{ok}]",
-                flush=True,
-            )
-
-        result = _merge_chunk_results(chunk_results, chunks)
-        logger.info(
-            "Chunked triage %s: %d msgs, %d chunks, %.1fs total (%.1fs/chunk avg)",
-            thread_id[:30], n_msgs, len(chunks),
-            time.time() - t_start, (time.time() - t_start) / len(chunks),
-        )
-        return thread_id, result
     else:
         # Standard single-pass
         triage_prompt = build_thread_full_prompt(
@@ -2439,6 +2266,7 @@ async def _async_triage_one_thread_inner(
                 max_tokens=max_output,
                 format_json=True,
                 cache_system=True,
+                on_status=on_status,
             ),
             timeout=ASYNC_CALL_TIMEOUT,
         )
@@ -2467,8 +2295,8 @@ def run_triage(
 ) -> dict[str, Any]:
     """Run thread-based LLM triage on events, output Claims.
 
-    Uses asyncio for concurrent Gemini calls. Large threads (>200 msgs)
-    get chunked triage: overlapping windows, each triaged independently, merged.
+    Uses asyncio for concurrent Gemini calls. All threads use single-prompt
+    triage (up to 500 most recent messages).
 
     Args:
         max_concurrent: Max parallel Gemini API calls.
@@ -2586,74 +2414,105 @@ def run_triage(
 
     # Process THREAD_FULL threads via asyncio
     if full_threads:
-        _completed_count = 0
-        _failed_count = 0
-        _timed_out_count = 0
         _total_threads = len(full_threads)
-        _in_flight: set[str] = set()  # thread IDs currently being processed
-        _large_threads = {tid for tid, tevts in full_threads if len(tevts) > LARGE_THREAD_THRESHOLD}
-
-        # Log breakdown before starting
-        n_large = len(_large_threads)
-        n_small = _total_threads - n_large
         total_msgs = sum(len(tevts) for _, tevts in full_threads)
+
+        # ── Slot tracker: shows what each Gemini concurrency slot is doing ──
+        _slots: dict[str, dict] = {}  # label → {status, n_msgs, t_start}
+        _done = 0
+        _failed = 0
+        _timed_out = 0
+        _last_print_time = 0.0
+
+        def _print_slots(force: bool = False):
+            """Print concurrency dashboard. Rate-limited to every 2s unless forced."""
+            nonlocal _last_print_time
+            now_t = time.time()
+            if not force and (now_t - _last_print_time) < 2.0:
+                return
+            _last_print_time = now_t
+
+            elapsed = now_t - start_time
+            queued = sum(1 for s in _slots.values() if s["status"] == "queued")
+            waiting = sum(1 for s in _slots.values() if s["status"] == "waiting_for_slot")
+            calling = sum(1 for s in _slots.values() if s["status"] == "calling_gemini")
+            building = sum(1 for s in _slots.values() if s["status"] == "building_prompt")
+
+            parts = [f"{_done}/{_total_threads} done"]
+            if calling:
+                parts.append(f"{calling} calling Gemini")
+            if waiting:
+                parts.append(f"{waiting} waiting for slot")
+            if building:
+                parts.append(f"{building} building prompt")
+            if queued:
+                parts.append(f"{queued} queued")
+            if _failed:
+                parts.append(f"{_failed} failed")
+            if _timed_out:
+                parts.append(f"{_timed_out} timed out")
+            parts.append(f"{elapsed:.0f}s elapsed")
+
+            print(f"  Triage: {' | '.join(parts)}", flush=True)
+
+            # Show only the slots actively calling Gemini (max 10)
+            gemini_slots = [
+                (label, info) for label, info in _slots.items()
+                if info["status"] == "calling_gemini"
+            ]
+            gemini_slots.sort(key=lambda x: x[1].get("t_gemini", x[1]["t_start"]))
+            for i, (label, info) in enumerate(gemini_slots):
+                t_ref = info.get("t_gemini", info["t_start"])
+                secs = now_t - t_ref
+                print(f"    slot {i+1:>2}/{len(gemini_slots)}: {label} ({info['n_msgs']} msgs) → {secs:.0f}s", flush=True)
+
         print(
-            f"  Dispatching {_total_threads} cloud threads "
-            f"({n_large} chunked, {n_small} single-pass, "
-            f"{total_msgs} total msgs, concurrency={max_concurrent})",
+            f"  Dispatching {_total_threads} threads "
+            f"({total_msgs} msgs, max 10 concurrent Gemini calls)",
             flush=True,
         )
 
-        async def _safe_triage_thread(tid, tevts, sem, prior, all_evts):
-            """Wrap thread triage with overall timeout so one hung thread can't block.
-
-            The timeout only starts once the semaphore is acquired — queue
-            wait time does NOT count.  This prevents small threads from
-            timing out while stuck behind slow chunked threads.
-            """
-            nonlocal _completed_count, _failed_count, _timed_out_count
-            label = tid[:30]
+        async def _safe_triage_thread(tid, tevts, prior, all_evts):
+            """Wrap thread triage with status tracking and timeout."""
+            nonlocal _done, _failed, _timed_out
+            label = tid[:40]
             n = len(tevts)
-            _in_flight.add(label)
+            _slots[label] = {"status": "queued", "n_msgs": n, "t_start": time.time()}
+
+            def on_status(status):
+                if label in _slots:
+                    _slots[label]["status"] = status
+                    if status == "calling_gemini":
+                        _slots[label]["t_gemini"] = time.time()
+                    _print_slots()
+
             try:
                 result = await _async_triage_one_thread(
-                    tid, tevts, store, sender_cache, llm_client, now, sem,
+                    tid, tevts, store, sender_cache, llm_client, now,
                     prior_context=prior,
                     all_thread_events=all_evts,
                     profile_context=profile_context,
+                    on_status=on_status,
                 )
                 if result[1] is None:
-                    _failed_count += 1
+                    _failed += 1
             except asyncio.TimeoutError:
                 logger.error("Thread %s (%d msgs) timed out after %ds — skipping", label, n, THREAD_TIMEOUT)
-                _timed_out_count += 1
+                _timed_out += 1
                 result = (tid, None)
-            _in_flight.discard(label)
-            _completed_count += 1
-            if _completed_count % 25 == 0 or _completed_count == _total_threads:
-                elapsed = time.time() - start_time
-                waiting = len(_in_flight)
-                status = f"  Triage: {_completed_count}/{_total_threads} done"
-                if _timed_out_count:
-                    status += f", {_timed_out_count} timed out"
-                if _failed_count:
-                    status += f", {_failed_count} failed"
-                status += f", {waiting} in-flight ({elapsed:.0f}s)"
-                print(status, flush=True)
-                if waiting > 0 and waiting <= 5:
-                    # Show which threads are still running (helps debug hangs)
-                    for t in sorted(_in_flight):
-                        print(f"    waiting: {t}", flush=True)
+
+            _slots.pop(label, None)
+            _done += 1
+            _print_slots(force=(_done % 10 == 0 or _done == _total_threads))
             return result
 
         async def _run_all() -> list[tuple[str, ThreadTriageResult | None]]:
-            sem = asyncio.Semaphore(max_concurrent)
             tasks = []
             for tid, tevts in full_threads:
                 prior = thread_prior_ctx.get(tid)
                 all_evts = thread_all_events.get(tid)
                 tasks.append(
-                    _safe_triage_thread(tid, tevts, sem, prior, all_evts)
+                    _safe_triage_thread(tid, tevts, prior, all_evts)
                 )
             return await asyncio.gather(*tasks, return_exceptions=False)
 

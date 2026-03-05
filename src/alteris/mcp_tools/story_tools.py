@@ -356,10 +356,13 @@ def _save_stories_to_db(
     store: LayeredGraphStore,
     groups: list[dict],
     cluster_hash: str,
+    task_map: dict[str, dict] | None = None,
 ):
     """Persist LLM clustering results to cq_stories + cq_story_members.
 
     Clears old LLM-sourced stories before saving new ones (replace, not accumulate).
+    When task_map is provided, materializes each task as JSON in task_data so that
+    the Feed/Desk read path is a pure SQL join with no KG queries.
     """
     # Delete old LLM stories
     old_stories = store.conn.execute(
@@ -374,11 +377,43 @@ def _save_stories_to_db(
         if not task_ids:
             continue
         story_id = _stable_story_id(task_ids)
+
+        # Compute story priority from tasks
+        priorities = []
+        if task_map:
+            for tid in task_ids:
+                t = task_map.get(tid, {})
+                p = t.get("priority", 3)
+                bucket = t.get("bucket", "background")
+                bucket_priority = {"immediate": 1, "review": 2}.get(bucket, 3)
+                priorities.append(min(p, bucket_priority))
+        story_priority = min(priorities) if priorities else None
+
         store.put_cq_story(
             story_id, title, source="llm", cluster_hash=cluster_hash,
+            priority=story_priority,
         )
+
+        # Materialize members with task_data + write person associations
+        persons_seen: set[str] = set()
         for i, tid in enumerate(task_ids):
-            store.add_story_member(story_id, tid, position=i)
+            task_data_json = None
+            if task_map and tid in task_map:
+                # Strip internal fields before serializing
+                clean = {k: v for k, v in task_map[tid].items() if not k.startswith("_")}
+                task_data_json = json.dumps(clean, default=str)
+
+                # Collect persons for story-level association
+                for key in ("who", "to_whom"):
+                    val = clean.get(key, "")
+                    if val and val.strip():
+                        persons_seen.add(val.strip())
+
+            store.add_story_member(story_id, tid, position=i, task_data=task_data_json)
+
+        # Write story-person associations
+        for person_name in persons_seen:
+            store.add_story_person(story_id, person_name, role="")
 
 
 def _rebuild_from_cache(
@@ -551,7 +586,7 @@ def cluster_into_stories(
                 if incremental:
                     groups = _merge_incremental(cached_groups, incremental)
                     groups = _apply_anti_links(store, groups)
-                    _save_stories_to_db(store, groups, current_hash)
+                    _save_stories_to_db(store, groups, current_hash, task_map=all_task_map)
                     return _groups_to_stories(groups, all_task_map, exclude_ids=exclude_ids)
 
     # SLOW PATH: full LLM clustering
@@ -562,7 +597,7 @@ def cluster_into_stories(
         groups = _fallback_person_cluster(task_list)
 
     groups = _apply_anti_links(store, groups)
-    _save_stories_to_db(store, groups, current_hash)
+    _save_stories_to_db(store, groups, current_hash, task_map=all_task_map)
     return _groups_to_stories(groups, all_task_map, exclude_ids=exclude_ids)
 
 
@@ -689,39 +724,83 @@ def _clean_task_for_output(task: dict) -> dict:
 
 
 def handle_cq_get_stories(store: LayeredGraphStore, **kwargs) -> dict:
-    """Desk stories: only accepted tasks, clustered into stories.
-
-    Uses the same stable clustering as Feed — just filters to accepted only.
-    No accepted tasks → empty result (frontend shows empty-state).
-    """
+    """Desk stories: pure SQL read of accepted tasks from materialized stories."""
+    # Gather accepted task IDs
     user_tasks = store.get_cq_tasks(include_done=True)
     accepted_ids: set[str] = set()
-    not_accepted_ids: set[str] = set()
     for ut in user_tasks:
         uid = ut.get("claim_id") or ut["id"]
         if ut.get("accepted"):
             accepted_ids.add(uid)
-        else:
-            not_accepted_ids.add(uid)
 
     if not accepted_ids:
         return {"count": 0, "stories": []}
 
-    # Cluster all tasks (cache-stable), then filter to accepted only
-    all_stories = cluster_into_stories(store, exclude_ids=not_accepted_ids)
-    # Also drop any tasks that weren't explicitly accepted
-    filtered: list[dict] = []
-    for story in all_stories:
-        kept = [t for t in story.get("tasks", []) if t["id"] in accepted_ids]
-        if kept:
-            story["tasks"] = kept
-            filtered.append(story)
+    # Single JOIN: stories + members
+    rows = store.conn.execute(
+        """SELECT s.id AS story_id, s.title, s.source, s.color, s.icon,
+                  s.status, s.priority, s.priority_override, s.updated_at,
+                  sm.task_id, sm.task_data, sm.position
+           FROM cq_stories s
+           JOIN cq_story_members sm ON sm.story_id = s.id
+           WHERE s.status = 'active' AND s.source = 'llm'
+             AND sm.task_data IS NOT NULL
+           ORDER BY COALESCE(s.priority_override, s.priority, 99),
+                    s.updated_at DESC, sm.position"""
+    ).fetchall()
 
-    filtered.sort(key=lambda s: (s.get("priority") or 99, -(s.get("updated_at") or 0)))
-    for s in filtered:
-        s["tasks"] = [_clean_task_for_output(t) for t in s.get("tasks", [])]
+    # Group by story, keep only accepted tasks
+    story_map: dict[str, dict] = {}
+    for r in rows:
+        tid = r["task_id"]
+        if tid not in accepted_ids:
+            continue
 
-    return {"count": len(filtered), "stories": filtered}
+        task = json.loads(r["task_data"])
+        sid = r["story_id"]
+
+        if sid not in story_map:
+            story_map[sid] = {
+                "id": sid,
+                "title": r["title"],
+                "source": r["source"],
+                "color": r["color"] or "",
+                "icon": r["icon"] or "",
+                "status": r["status"],
+                "priority": r["priority_override"] or r["priority"] or 99,
+                "priority_override": r["priority_override"],
+                "tasks": [],
+                "persons": [],
+                "updated_at": r["updated_at"],
+                "is_new": False,
+            }
+        story_map[sid]["tasks"].append(task)
+
+    # Load persons
+    if story_map:
+        person_rows = store.conn.execute(
+            """SELECT sp.story_id, sp.person_id, sp.role,
+                      COALESCE(p.canonical_name, sp.person_id) AS name
+               FROM cq_story_persons sp
+               LEFT JOIN persons p ON sp.person_id = p.person_id
+               WHERE sp.story_id IN ({})""".format(
+                ",".join("?" for _ in story_map)
+            ),
+            list(story_map.keys()),
+        ).fetchall()
+        for pr in person_rows:
+            sid = pr["story_id"]
+            if sid in story_map:
+                story_map[sid]["persons"].append({
+                    "person_id": pr["person_id"],
+                    "name": pr["name"],
+                    "role": pr["role"] or "",
+                })
+
+    stories = [s for s in story_map.values() if s["tasks"]]
+    stories.sort(key=lambda s: (s.get("priority") or 99, -(s.get("updated_at") or 0)))
+
+    return {"count": len(stories), "stories": stories}
 
 
 def handle_cq_create_story(
@@ -909,13 +988,29 @@ def handle_cq_archive_story(
     return {"archived": ok, "story_id": story_id}
 
 
-def handle_cq_get_feed(store: LayeredGraphStore, **kwargs) -> dict:
-    """Feed: tasks not yet accepted or dismissed, clustered into stories.
+def handle_cq_get_feed(
+    store: LayeredGraphStore,
+    lookback_days: int | None = None,
+    lookahead_days: int | None = None,
+    **kwargs,
+) -> dict:
+    """Feed: pure SQL read of materialized stories, filtered by relevance window.
 
-    Uses the same stable clustering as Desk — accepts/done/dismiss never
-    trigger re-clustering. Only new KG tasks cause incremental clustering.
+    Args:
+        lookback_days: How many days in the past to show (default: 30).
+        lookahead_days: How many days in the future to show (default: 30).
     """
-    # Gather user triage state
+    from alteris.mcp_tools.cq_tools import _within_relevance_window, _is_stale_event
+
+    # Parse string params from MCP (they arrive as strings)
+    if isinstance(lookback_days, str):
+        lookback_days = int(lookback_days)
+    if isinstance(lookahead_days, str):
+        lookahead_days = int(lookahead_days)
+
+    now = int(time.time())
+
+    # Gather user triage state for exclude + seen
     user_tasks = store.get_cq_tasks(include_done=True)
     exclude_ids: set[str] = set()
     seen_map: dict[str, int | None] = {}
@@ -925,24 +1020,94 @@ def handle_cq_get_feed(store: LayeredGraphStore, **kwargs) -> dict:
             exclude_ids.add(uid)
         seen_map[uid] = ut.get("seen_at")
 
-    # Cluster all tasks (cache-stable), filtering out accepted/done/dismissed
-    stories = cluster_into_stories(store, exclude_ids=exclude_ids)
+    # Single JOIN: stories + members
+    rows = store.conn.execute(
+        """SELECT s.id AS story_id, s.title, s.source, s.color, s.icon,
+                  s.status, s.priority, s.priority_override, s.updated_at,
+                  sm.task_id, sm.task_data, sm.position
+           FROM cq_stories s
+           JOIN cq_story_members sm ON sm.story_id = s.id
+           WHERE s.status = 'active' AND s.source = 'llm'
+             AND sm.task_data IS NOT NULL
+           ORDER BY COALESCE(s.priority_override, s.priority, 99),
+                    s.updated_at DESC, sm.position"""
+    ).fetchall()
 
-    # Mark unseen tasks
-    for s in stories:
-        for t in s.get("tasks", []):
-            t["is_new"] = t["id"] not in seen_map or seen_map.get(t["id"]) is None
+    # Group by story
+    story_map: dict[str, dict] = {}
+    for r in rows:
+        sid = r["story_id"]
+        tid = r["task_id"]
 
-    # Clean internal fields
-    for s in stories:
-        s["tasks"] = [_clean_task_for_output(t) for t in s.get("tasks", [])]
+        if tid in exclude_ids:
+            continue
 
-    # Flat items list for clients
+        task = json.loads(r["task_data"])
+
+        # Apply deadline relevance window (UI-controlled)
+        deadline = task.get("due_date")
+        if not _within_relevance_window(deadline, now, lookback_days, lookahead_days):
+            continue
+
+        # Filter stale time-bound events
+        if _is_stale_event(
+            task.get("title", ""),
+            task.get("commitment_type", ""),
+            task.get("source_channel", ""),
+            deadline,
+            now,
+        ):
+            continue
+
+        task["is_new"] = tid not in seen_map or seen_map.get(tid) is None
+
+        if sid not in story_map:
+            story_map[sid] = {
+                "id": sid,
+                "title": r["title"],
+                "source": r["source"],
+                "color": r["color"] or "",
+                "icon": r["icon"] or "",
+                "status": r["status"],
+                "priority": r["priority_override"] or r["priority"] or 99,
+                "priority_override": r["priority_override"],
+                "tasks": [],
+                "persons": [],
+                "updated_at": r["updated_at"],
+                "is_new": False,
+            }
+        story_map[sid]["tasks"].append(task)
+        if task.get("is_new"):
+            story_map[sid]["is_new"] = True
+
+    # Load persons per story in a single query
+    if story_map:
+        person_rows = store.conn.execute(
+            """SELECT sp.story_id, sp.person_id, sp.role,
+                      COALESCE(p.canonical_name, sp.person_id) AS name
+               FROM cq_story_persons sp
+               LEFT JOIN persons p ON sp.person_id = p.person_id
+               WHERE sp.story_id IN ({})""".format(
+                ",".join("?" for _ in story_map)
+            ),
+            list(story_map.keys()),
+        ).fetchall()
+        for pr in person_rows:
+            sid = pr["story_id"]
+            if sid in story_map:
+                story_map[sid]["persons"].append({
+                    "person_id": pr["person_id"],
+                    "name": pr["name"],
+                    "role": pr["role"] or "",
+                })
+
+    # Drop stories with no visible tasks
+    stories = [s for s in story_map.values() if s["tasks"]]
+    stories.sort(key=lambda s: (s.get("priority") or 99, -(s.get("updated_at") or 0)))
+
     feed_items = []
-    task_story_map: dict[str, str] = {}
     for s in stories:
-        for t in s.get("tasks", []):
-            task_story_map[t.get("id", "")] = s["id"]
+        for t in s["tasks"]:
             feed_items.append(t)
 
     return {
@@ -1180,9 +1345,12 @@ register_tool(ToolDef(
 
 register_tool(ToolDef(
     name="cq_get_feed",
-    description="Get the CQ feed: tasks sorted by recency with 'new' flag and story grouping. For the Feed surface.",
+    description="Get the CQ feed: tasks sorted by recency with 'new' flag and story grouping. For the Feed surface. Optional lookback/lookahead filters control the time window.",
     permission="write",
-    params=[],
+    params=[
+        ToolParam("lookback_days", "integer", "How many days in the past to show (default: 30)"),
+        ToolParam("lookahead_days", "integer", "How many days in the future to show (default: 30)"),
+    ],
     handler=handle_cq_get_feed,
 ))
 

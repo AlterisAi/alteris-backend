@@ -2355,13 +2355,62 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    # Configure logging
+    # Configure logging: console + file
     level = logging.DEBUG if args.verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+    log_dir = Path.home() / ".alteris" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "alteris.log"
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)  # capture everything; handlers filter
+
+    # Console handler (respects --verbose)
+    console = logging.StreamHandler()
+    console.setLevel(level)
+    console.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)-8s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
+    ))
+    root_logger.addHandler(console)
+
+    # File handler (always DEBUG, rotates at 10MB, keeps 3 backups)
+    from logging.handlers import RotatingFileHandler
+    file_handler = RotatingFileHandler(
+        log_file, maxBytes=10_000_000, backupCount=3, encoding="utf-8",
     )
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+    root_logger.addHandler(file_handler)
+
+    # Tee stdout/stderr so print() output is also captured in the log
+    class _TeeWriter:
+        """Write to both the original stream and a file."""
+        def __init__(self, original, log_fh):
+            self._original = original
+            self._log_fh = log_fh
+        def write(self, text):
+            self._original.write(text)
+            try:
+                self._log_fh.write(text)
+            except Exception:
+                pass
+        def flush(self):
+            self._original.flush()
+            try:
+                self._log_fh.flush()
+            except Exception:
+                pass
+        def __getattr__(self, name):
+            return getattr(self._original, name)
+
+    _print_log = log_dir / "output.log"
+    _print_fh = open(_print_log, "a", encoding="utf-8")
+    sys.stdout = _TeeWriter(sys.stdout, _print_fh)
+    sys.stderr = _TeeWriter(sys.stderr, _print_fh)
+
     # Suppress noisy third-party loggers
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)

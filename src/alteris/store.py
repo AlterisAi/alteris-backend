@@ -348,6 +348,7 @@ CREATE TABLE IF NOT EXISTS cq_story_members (
     story_id    TEXT NOT NULL,
     task_id     TEXT NOT NULL,
     position    INTEGER DEFAULT 0,
+    task_data   TEXT,
     added_at    INTEGER NOT NULL,
     PRIMARY KEY (story_id, task_id)
 );
@@ -502,6 +503,16 @@ class LayeredGraphStore:
         if "cluster_hash" not in story_cols:
             self._conn.execute(
                 "ALTER TABLE cq_stories ADD COLUMN cluster_hash TEXT"
+            )
+
+        # Migrate cq_story_members: add task_data if missing
+        sm_cols = {
+            r["name"]
+            for r in self._conn.execute("PRAGMA table_info(cq_story_members)").fetchall()
+        }
+        if "task_data" not in sm_cols:
+            self._conn.execute(
+                "ALTER TABLE cq_story_members ADD COLUMN task_data TEXT"
             )
 
         # cq_extractable_fields: user-defined fields injected into synthesis prompt
@@ -1945,14 +1956,17 @@ class LayeredGraphStore:
         self.conn.commit()
         return cursor.rowcount > 0
 
-    def add_story_member(self, story_id: str, task_id: str, position: int = 0):
-        """Add a task to a story."""
+    def add_story_member(
+        self, story_id: str, task_id: str, position: int = 0,
+        task_data: str | None = None,
+    ):
+        """Add a task to a story, optionally materializing its task_data JSON."""
         now = int(time.time())
         self.conn.execute(
             """INSERT OR REPLACE INTO cq_story_members
-               (story_id, task_id, position, added_at)
-               VALUES (?, ?, ?, ?)""",
-            (story_id, task_id, position, now),
+               (story_id, task_id, position, task_data, added_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (story_id, task_id, position, task_data, now),
         )
         # Update task's story_id column
         self.conn.execute(
@@ -1981,7 +1995,7 @@ class LayeredGraphStore:
     def get_story_members(self, story_id: str) -> list[dict]:
         """Get tasks in a story, ordered by position."""
         rows = self.conn.execute(
-            """SELECT task_id, position, added_at
+            """SELECT task_id, position, task_data, added_at
                FROM cq_story_members
                WHERE story_id = ?
                ORDER BY position""",

@@ -9,6 +9,7 @@ or from ~/.alteris/config.json.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -67,6 +68,7 @@ def _resolve_model(requested: str, default: str) -> str:
 
 
 _REQUEST_TIMEOUT_MS = 300_000  # 300 seconds — Gemini 3 Flash needs headroom for long threads
+_MAX_CONCURRENT = 10  # Global cap on concurrent Gemini API calls
 
 
 class GeminiClient(LLMClient):
@@ -74,7 +76,12 @@ class GeminiClient(LLMClient):
 
     Supports embedding, generation, and chat via the google-genai SDK.
     All methods are synchronous wrappers suitable for thread-pool execution.
+
+    A per-event-loop asyncio Semaphore caps concurrent async calls to
+    _MAX_CONCURRENT to avoid 429 cascades from Gemini's rate limiter.
     """
+
+    _semaphore_by_loop: dict[int, Any] = {}  # loop id → asyncio.Semaphore
 
     def __init__(self, model: str = DEFAULT_MODEL, store: Any = None, has_own_key: bool = False):
         self.model = model
@@ -84,6 +91,16 @@ class GeminiClient(LLMClient):
         self._store = store
         self._has_own_key = has_own_key
         self._cache_map: dict[str, tuple[str, float]] = {}  # hash → (cache_name, expiry_ts)
+
+    @classmethod
+    def _get_semaphore(cls) -> Any:
+        """Return a Semaphore for the current event loop, creating one if needed."""
+        import asyncio
+        loop = asyncio.get_running_loop()
+        loop_id = id(loop)
+        if loop_id not in cls._semaphore_by_loop:
+            cls._semaphore_by_loop[loop_id] = asyncio.Semaphore(_MAX_CONCURRENT)
+        return cls._semaphore_by_loop[loop_id]
 
     def _get_key(self) -> str:
         if self._api_key:
@@ -134,7 +151,14 @@ class GeminiClient(LLMClient):
         return self._client
 
     def _get_async_client(self) -> Any:
-        """Return a cached async genai Client."""
+        """Return a cached async genai Client, reset if event loop changed."""
+        try:
+            loop_id = id(asyncio.get_running_loop())
+        except RuntimeError:
+            loop_id = None
+        # Invalidate cached client if the event loop changed (e.g. dedup → triage)
+        if self._async_client is not None and getattr(self, "_async_loop_id", None) != loop_id:
+            self._async_client = None
         if self._async_client is not None:
             return self._async_client
         from google import genai
@@ -144,6 +168,7 @@ class GeminiClient(LLMClient):
             api_key=key,
             http_options=gtypes.HttpOptions(timeout=_REQUEST_TIMEOUT_MS),
         )
+        self._async_loop_id = loop_id
         return self._async_client
 
     # Models that don't support context caching (400 errors, slow timeout)
@@ -459,13 +484,23 @@ class GeminiClient(LLMClient):
         google_search: bool = False,
         cache_system: bool = False,
         response_schema: object | None = None,
+        on_status: "callable | None" = None,
     ) -> str | None:
         """Async generate text via Gemini API.
 
         Uses a cached async client for concurrent requests. Suitable for
-        asyncio.gather() parallelism in triage.
+        asyncio.gather() parallelism in triage. A class-level Semaphore
+        caps concurrency to _MAX_CONCURRENT to prevent 429 cascades.
+
+        on_status: optional callback(status_str) called at key points:
+            "waiting_for_slot"  — queued behind the semaphore
+            "calling_gemini"    — semaphore acquired, API call in flight
+            "retrying"          — retryable error, will retry
         """
         self._check_spend_limit()
+        sem = self._get_semaphore()
+        if on_status:
+            on_status("waiting_for_slot")
         max_retries = 2
         for attempt in range(max_retries + 1):
             try:
@@ -503,11 +538,18 @@ class GeminiClient(LLMClient):
                         thinking_budget=thinking_budget,
                     )
 
-                response = await async_client.aio.models.generate_content(
-                    model=cached_model or use_model,
-                    contents=prompt,
-                    config=config,
-                )
+                async with sem:
+                    if on_status:
+                        on_status("calling_gemini")
+                    import asyncio as _aio
+                    response = await _aio.wait_for(
+                        async_client.aio.models.generate_content(
+                            model=cached_model or use_model,
+                            contents=prompt,
+                            config=config,
+                        ),
+                        timeout=120,  # 2 min hard cap per API call
+                    )
                 self._record_spend(use_model, response, "agenerate")
                 return response.text
 
@@ -525,7 +567,8 @@ class GeminiClient(LLMClient):
                     logger.error("Gemini daily quota exhausted — not retrying: %s", exc)
                     raise DailyQuotaExhaustedError(str(exc)) from exc
                 is_retryable = (
-                    "timeout" in exc_str or "timed out" in exc_str
+                    isinstance(exc, (TimeoutError, asyncio.TimeoutError))
+                    or "timeout" in exc_str or "timed out" in exc_str
                     or "503" in exc_str or "unavailable" in exc_str
                     or "429" in exc_str or "resource_exhausted" in exc_str
                 )
@@ -533,6 +576,8 @@ class GeminiClient(LLMClient):
                     server_delay = _parse_retry_delay(str(exc))
                     wait = min(server_delay or (2 ** attempt), 60)
                     logger.warning("Gemini async retryable error (attempt %d/%d), waiting %.0fs: %s", attempt + 1, max_retries + 1, wait, exc)
+                    if on_status:
+                        on_status(f"retrying ({attempt+1}/{max_retries+1})")
                     import asyncio
                     await asyncio.sleep(wait)
                     self._async_client = None

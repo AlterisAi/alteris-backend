@@ -48,10 +48,16 @@ def _find_addressbook_dbs() -> list[Path]:
     # Per-source DBs (iCloud, Exchange, etc.)
     sources_dir = ADDRESSBOOK_DIR / "Sources"
     if sources_dir.exists():
-        for src_dir in sources_dir.iterdir():
-            candidate = src_dir / "AddressBook-v22.abcddb"
-            if candidate.exists():
-                dbs.append(candidate)
+        try:
+            for src_dir in sources_dir.iterdir():
+                candidate = src_dir / "AddressBook-v22.abcddb"
+                if candidate.exists():
+                    dbs.append(candidate)
+        except PermissionError:
+            logger.warning(
+                "Cannot read AddressBook/Sources — grant Contacts or "
+                "Full Disk Access in System Settings > Privacy & Security"
+            )
     return dbs
 
 

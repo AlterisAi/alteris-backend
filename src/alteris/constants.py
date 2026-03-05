@@ -558,7 +558,7 @@ MCP_HOST = "localhost"
 # Clarity Queue
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-CQ_DEFAULT_LOOKBACK_DAYS = 7
+CQ_DEFAULT_LOOKBACK_DAYS = 30
 """How far back to show overdue/recent items in the Clarity Queue."""
 
 CQ_DEFAULT_LOOKAHEAD_DAYS = 30
