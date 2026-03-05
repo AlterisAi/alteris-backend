@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import subprocess
+import weakref
 from pathlib import Path
 from typing import Any
 
@@ -81,7 +82,9 @@ class GeminiClient(LLMClient):
     _MAX_CONCURRENT to avoid 429 cascades from Gemini's rate limiter.
     """
 
-    _semaphore_by_loop: dict[int, Any] = {}  # loop id → asyncio.Semaphore
+    # WeakKeyDictionary keyed by loop object: automatically removes entries
+    # when the event loop is garbage-collected, preventing stale-ID reuse.
+    _semaphore_by_loop: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
     def __init__(self, model: str = DEFAULT_MODEL, store: Any = None, has_own_key: bool = False):
         self.model = model
@@ -91,16 +94,17 @@ class GeminiClient(LLMClient):
         self._store = store
         self._has_own_key = has_own_key
         self._cache_map: dict[str, tuple[str, float]] = {}  # hash → (cache_name, expiry_ts)
+        self._created_async_clients: list = []  # tracks all async clients created for cleanup
 
     @classmethod
     def _get_semaphore(cls) -> Any:
         """Return a Semaphore for the current event loop, creating one if needed."""
-        import asyncio
         loop = asyncio.get_running_loop()
-        loop_id = id(loop)
-        if loop_id not in cls._semaphore_by_loop:
-            cls._semaphore_by_loop[loop_id] = asyncio.Semaphore(_MAX_CONCURRENT)
-        return cls._semaphore_by_loop[loop_id]
+        # Key by loop object (not id) so WeakKeyDictionary cleans up stale entries
+        # when the loop is garbage-collected, preventing stale-ID reuse.
+        if loop not in cls._semaphore_by_loop:
+            cls._semaphore_by_loop[loop] = asyncio.Semaphore(_MAX_CONCURRENT)
+        return cls._semaphore_by_loop[loop]
 
     def _get_key(self) -> str:
         if self._api_key:
@@ -169,7 +173,25 @@ class GeminiClient(LLMClient):
             http_options=gtypes.HttpOptions(timeout=_REQUEST_TIMEOUT_MS),
         )
         self._async_loop_id = loop_id
+        # Track all created clients so aclose_all() can clean them up,
+        # including intermediates abandoned during retry (F10).
+        self._created_async_clients.append(self._async_client)
         return self._async_client
+
+    async def aclose_all(self) -> None:
+        """Close all async clients created by this instance.
+
+        Covers both the current client and any intermediate clients that were
+        abandoned during retry (self._async_client = None path). Replaces the
+        manual single-client close in callers like dedup._run_all().
+        """
+        for client in self._created_async_clients:
+            try:
+                await client.aio.aclose()
+            except Exception:
+                pass
+        self._created_async_clients.clear()
+        self._async_client = None
 
     # Models that don't support context caching (400 errors, slow timeout)
     _CACHE_BLOCKLIST = {"gemini-2.5-flash-lite", "gemini-2.0-flash-lite"}
@@ -184,7 +206,7 @@ class GeminiClient(LLMClient):
         import time as _time
 
         # Skip models that don't support caching (avoids slow 400 timeouts)
-        if any(blocked in model for blocked in self._CACHE_BLOCKLIST):
+        if any(blocked in model for blocked in GeminiClient._CACHE_BLOCKLIST):
             return None
 
         cache_key = hashlib.sha256(f"{model}:{system_text}".encode()).hexdigest()[:16]
@@ -217,9 +239,62 @@ class GeminiClient(LLMClient):
 
         except Exception as exc:
             logger.debug("Gemini cache creation failed (will use uncached): %s", exc)
-            # Add model to blocklist so we don't retry on every call
-            self._CACHE_BLOCKLIST = self._CACHE_BLOCKLIST | {model}
+            # Update class-level blocklist so ALL instances see the update (F11).
+            GeminiClient._CACHE_BLOCKLIST = GeminiClient._CACHE_BLOCKLIST | {model}
             return None
+
+    async def _aget_or_create_cache(self, model: str, system_text: str, ttl_seconds: int = 3600) -> str | None:
+        """Async version of _get_or_create_cache.
+
+        The in-memory _cache_map check is synchronous (just a dict lookup).
+        Only the HTTP call (client.caches.create) runs in a thread-pool executor
+        so the event loop is not blocked during cache creation (F4).
+        """
+        import hashlib
+        import time as _time
+
+        # Skip models that don't support caching (avoids slow 400 timeouts)
+        if any(blocked in model for blocked in GeminiClient._CACHE_BLOCKLIST):
+            return None
+
+        cache_key = hashlib.sha256(f"{model}:{system_text}".encode()).hexdigest()[:16]
+        now = _time.time()
+
+        # Check in-memory map first — pure dict lookup, no I/O, safe to do sync.
+        if cache_key in self._cache_map:
+            cache_name, expiry = self._cache_map[cache_key]
+            if now < expiry:
+                return cache_name
+            del self._cache_map[cache_key]
+
+        # Run the synchronous HTTP call in a thread-pool executor so the event
+        # loop remains free to fire timeout callbacks while the cache is created.
+        loop = asyncio.get_running_loop()
+
+        def _create_sync() -> str | None:
+            try:
+                from google.genai import types
+                client = self._get_client()
+                cache = client.caches.create(
+                    model=model,
+                    config=types.CreateCachedContentConfig(
+                        system_instruction=system_text,
+                        display_name=f"alteris_{cache_key}",
+                        ttl=f"{ttl_seconds}s",
+                    ),
+                )
+                return cache.name
+            except Exception as exc:
+                logger.debug("Gemini cache creation failed (will use uncached): %s", exc)
+                GeminiClient._CACHE_BLOCKLIST = GeminiClient._CACHE_BLOCKLIST | {model}
+                return None
+
+        cache_name = await loop.run_in_executor(None, _create_sync)
+        if cache_name:
+            now2 = _time.time()
+            self._cache_map[cache_key] = (cache_name, now2 + ttl_seconds - 60)
+            logger.debug("Created Gemini cache %s for model %s (TTL %ds)", cache_name, model, ttl_seconds)
+        return cache_name
 
     def is_available(self) -> bool:
         """Check if the Gemini API key is configured."""
@@ -509,10 +584,12 @@ class GeminiClient(LLMClient):
                 async_client = self._get_async_client()
                 use_model = _resolve_model(model, self.model)
 
-                # Try context caching for the system instruction
+                # Try context caching for the system instruction.
+                # Uses _aget_or_create_cache (async) so the HTTP call runs in
+                # a thread-pool executor and does not block the event loop (F4).
                 cached_model = None
                 if cache_system and system:
-                    cache_name = self._get_or_create_cache(use_model, system)
+                    cache_name = await self._aget_or_create_cache(use_model, system)
                     if cache_name:
                         cached_model = cache_name
 
@@ -538,18 +615,24 @@ class GeminiClient(LLMClient):
                         thinking_budget=thinking_budget,
                     )
 
-                async with sem:
-                    if on_status:
-                        on_status("calling_gemini")
-                    import asyncio as _aio
-                    response = await _aio.wait_for(
-                        async_client.aio.models.generate_content(
+                # Semaphore acquire is INSIDE wait_for so the 120s timeout
+                # covers the full wait (semaphore queue + API call), not just
+                # the API call. This prevents indefinite queueing when all
+                # slots are held by hung calls (F1).
+                async def _guarded_call() -> Any:
+                    async with sem:
+                        if on_status:
+                            on_status("calling_gemini")
+                        return await async_client.aio.models.generate_content(
                             model=cached_model or use_model,
                             contents=prompt,
                             config=config,
-                        ),
-                        timeout=120,  # 2 min hard cap per API call
-                    )
+                        )
+
+                response = await asyncio.wait_for(
+                    _guarded_call(),
+                    timeout=120,  # 2 min hard cap covering semaphore wait + API call
+                )
                 self._record_spend(use_model, response, "agenerate")
                 return response.text
 
@@ -566,10 +649,10 @@ class GeminiClient(LLMClient):
                 if _is_daily_quota_error(exc_str):
                     logger.error("Gemini daily quota exhausted — not retrying: %s", exc)
                     raise DailyQuotaExhaustedError(str(exc)) from exc
+                # Do NOT retry timeouts: a server that hangs once will likely
+                # hang again, tripling the delay for no benefit (F3).
                 is_retryable = (
-                    isinstance(exc, (TimeoutError, asyncio.TimeoutError))
-                    or "timeout" in exc_str or "timed out" in exc_str
-                    or "503" in exc_str or "unavailable" in exc_str
+                    "503" in exc_str or "unavailable" in exc_str
                     or "429" in exc_str or "resource_exhausted" in exc_str
                 )
                 if attempt < max_retries and is_retryable:
@@ -578,9 +661,16 @@ class GeminiClient(LLMClient):
                     logger.warning("Gemini async retryable error (attempt %d/%d), waiting %.0fs: %s", attempt + 1, max_retries + 1, wait, exc)
                     if on_status:
                         on_status(f"retrying ({attempt+1}/{max_retries+1})")
-                    import asyncio
                     await asyncio.sleep(wait)
+                    # Close the old async client before replacing it so the
+                    # HTTP connection pool is released cleanly (F6).
+                    old_client = self._async_client
                     self._async_client = None
+                    if old_client is not None:
+                        try:
+                            await old_client.aio.aclose()
+                        except Exception:
+                            pass
                     continue
                 logger.error("Gemini async generate failed: %s", exc)
                 return None

@@ -678,9 +678,12 @@ def verify_clusters_with_llm(
             _call_batch(idx, batch_start, prompt)
             for idx, (batch_start, prompt) in enumerate(batches)
         ])
-        # Close the async client before asyncio.run() tears down the loop,
-        # otherwise GC calls aclose() on a dead loop → "Event loop is closed"
-        if hasattr(llm_client, '_async_client') and llm_client._async_client is not None:
+        # Close ALL async clients (including intermediates abandoned during retries)
+        # before asyncio.run() tears down the loop, otherwise GC calls aclose()
+        # on a dead loop → "Event loop is closed" (F10).
+        if hasattr(llm_client, 'aclose_all'):
+            await llm_client.aclose_all()
+        elif hasattr(llm_client, '_async_client') and llm_client._async_client is not None:
             try:
                 await llm_client._async_client.aio.aclose()
             except Exception:
