@@ -1558,7 +1558,7 @@ def run_pipeline_stages(args: argparse.Namespace) -> dict:
     return summary
 
 
-BUILD_VERSION = "2026-03-03a"
+BUILD_VERSION = "2026-03-05a"
 """Build version stamp — bump on each DMG build so we can tell which binary is running."""
 
 
