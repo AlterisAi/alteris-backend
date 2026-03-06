@@ -68,7 +68,7 @@ def _resolve_model(requested: str, default: str) -> str:
     return default
 
 
-_REQUEST_TIMEOUT_MS = 300_000  # 300 seconds — Gemini 3 Flash needs headroom for long threads
+_REQUEST_TIMEOUT_MS = 120_000  # 120 seconds — SDK-level HTTP timeout as ultimate backstop
 _MAX_CONCURRENT = 10  # Global cap on concurrent Gemini API calls
 
 
@@ -584,19 +584,10 @@ class GeminiClient(LLMClient):
                 async_client = self._get_async_client()
                 use_model = _resolve_model(model, self.model)
 
-                # Try context caching for the system instruction.
-                # Uses _aget_or_create_cache (async) so the HTTP call runs in
-                # a thread-pool executor and does not block the event loop (F4).
-                cached_model = None
-                if cache_system and system:
-                    cache_name = await self._aget_or_create_cache(use_model, system)
-                    if cache_name:
-                        cached_model = cache_name
-
                 config = types.GenerateContentConfig(
                     temperature=temperature,
                     max_output_tokens=max_tokens,
-                    system_instruction=system if (system and not cached_model) else None,
+                    system_instruction=system or None,
                     automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
                 )
                 if google_search:
@@ -615,23 +606,19 @@ class GeminiClient(LLMClient):
                         thinking_budget=thinking_budget,
                     )
 
-                # Semaphore acquire is INSIDE wait_for so the 120s timeout
-                # covers the full wait (semaphore queue + API call), not just
-                # the API call. This prevents indefinite queueing when all
-                # slots are held by hung calls (F1).
                 async def _guarded_call() -> Any:
                     async with sem:
                         if on_status:
                             on_status("calling_gemini")
                         return await async_client.aio.models.generate_content(
-                            model=cached_model or use_model,
+                            model=use_model,
                             contents=prompt,
                             config=config,
                         )
 
                 response = await asyncio.wait_for(
                     _guarded_call(),
-                    timeout=120,  # 2 min hard cap covering semaphore wait + API call
+                    timeout=120,
                 )
                 self._record_spend(use_model, response, "agenerate")
                 return response.text
@@ -644,13 +631,13 @@ class GeminiClient(LLMClient):
                 return None
             except SpendLimitError:
                 raise
+            except asyncio.CancelledError:
+                raise
             except Exception as exc:
                 exc_str = str(exc).lower()
                 if _is_daily_quota_error(exc_str):
                     logger.error("Gemini daily quota exhausted — not retrying: %s", exc)
                     raise DailyQuotaExhaustedError(str(exc)) from exc
-                # Do NOT retry timeouts: a server that hangs once will likely
-                # hang again, tripling the delay for no benefit (F3).
                 is_retryable = (
                     "503" in exc_str or "unavailable" in exc_str
                     or "429" in exc_str or "resource_exhausted" in exc_str
@@ -662,15 +649,12 @@ class GeminiClient(LLMClient):
                     if on_status:
                         on_status(f"retrying ({attempt+1}/{max_retries+1})")
                     await asyncio.sleep(wait)
-                    # Close the old async client before replacing it so the
-                    # HTTP connection pool is released cleanly (F6).
-                    old_client = self._async_client
+                    # Reset the shared client so the next attempt creates a
+                    # fresh one.  Do NOT call aclose() here — other concurrent
+                    # callers may still have in-flight requests on this client.
+                    # The old client will be cleaned up by aclose_all() after
+                    # all tasks complete, or by GC.
                     self._async_client = None
-                    if old_client is not None:
-                        try:
-                            await old_client.aio.aclose()
-                        except Exception:
-                            pass
                     continue
                 logger.error("Gemini async generate failed: %s", exc)
                 return None

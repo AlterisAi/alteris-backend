@@ -720,6 +720,21 @@ def cmd_synthesize(args: argparse.Namespace) -> None:
     store.close()
 
 
+def cmd_stories(args: argparse.Namespace) -> None:
+    """Cluster tasks into stories for the Clarity feed."""
+    _print_header("Stage 7b: Story Clustering")
+    from alteris.mcp_tools.story_tools import cluster_into_stories
+
+    store = LayeredGraphStore(args.db_path)
+    stories = cluster_into_stories(store)
+    print(f"  Stories: {len(stories)}")
+    for s in stories:
+        title = s.get("title", "untitled")
+        tasks = s.get("tasks", [])
+        print(f"    - {title} ({len(tasks)} tasks)")
+    store.close()
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Command: commitments
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1501,6 +1516,21 @@ def run_pipeline_stages(args: argparse.Namespace) -> dict:
                 summary["errors"].append(f"{stage_name}: {exc}")
                 print(f"  {stage_name} failed: {exc}")
 
+        # Story clustering for Clarity feed
+        try:
+            from alteris.mcp_tools.story_tools import cluster_into_stories
+
+            store = LayeredGraphStore(args.db_path)
+            print("\n  Stage 7b: Story clustering...")
+            stories = cluster_into_stories(store)
+            print(f"  Stories: {len(stories)} created")
+            store.close()
+            summary["stages_run"] += 1
+        except Exception as exc:
+            summary["stages_failed"] += 1
+            summary["errors"].append(f"7b_stories: {exc}")
+            print(f"  7b_stories failed: {exc}")
+
         return summary
 
     # Save user's date filter, run ingestion with full history
@@ -1555,10 +1585,25 @@ def run_pipeline_stages(args: argparse.Namespace) -> dict:
             summary["errors"].append(f"{stage_name}: {exc}")
             print(f"  {stage_name} failed: {exc}")
 
+    # Story clustering: materialize cq_stories for the Clarity feed
+    try:
+        from alteris.mcp_tools.story_tools import cluster_into_stories
+
+        store = LayeredGraphStore(args.db_path)
+        print("\n  Stage 7b: Story clustering...")
+        stories = cluster_into_stories(store)
+        print(f"  Stories: {len(stories)} created")
+        store.close()
+        summary["stages_run"] += 1
+    except Exception as exc:
+        summary["stages_failed"] += 1
+        summary["errors"].append(f"7b_stories: {exc}")
+        print(f"  7b_stories failed: {exc}")
+
     return summary
 
 
-BUILD_VERSION = "2026-03-05a"
+BUILD_VERSION = "2026-03-05f"
 """Build version stamp — bump on each DMG build so we can tell which binary is running."""
 
 
@@ -2002,6 +2047,10 @@ def build_parser() -> argparse.ArgumentParser:
     # ── synthesize ──
     p_synth = subparsers.add_parser("synthesize", help="Compile claims into beliefs")
     p_synth.set_defaults(func=cmd_synthesize)
+
+    # ── stories ──
+    p_stories = subparsers.add_parser("stories", help="Cluster tasks into stories for Clarity feed")
+    p_stories.set_defaults(func=cmd_stories)
 
     # ── commitments ──
     p_commit = subparsers.add_parser("commitments", help="Show commitments with provenance trace")

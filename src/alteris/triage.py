@@ -99,7 +99,7 @@ MAX_SCORED_MESSAGES = 20
 
 # Flash Lite has 8K output token limit (vs 64K for Flash 3).
 # Cap triage output to avoid truncated JSON.
-LITE_MAX_OUTPUT_TOKENS = 8192
+LITE_MAX_OUTPUT_TOKENS = 16384
 DEEP_MAX_OUTPUT_TOKENS = 65536
 LARGE_THREAD_FRONTIER_THRESHOLD = 250
 FRONTIER_TIMEOUT = 600  # seconds — 10 min, large threads with 6mo data need headroom
@@ -2283,6 +2283,47 @@ async def _async_triage_one_thread_inner(
     return thread_id, result
 
 
+async def _async_triage_call_only(
+    thread_id: str,
+    thread_events: list[dict],
+    triage_prompt: str,
+    model_id: str,
+    max_output: int,
+    llm_client: LLMClient,
+    on_status: "callable | None" = None,
+) -> tuple[str, ThreadTriageResult | None]:
+    """API-call-only triage — prompt must be pre-built.
+
+    This avoids synchronous prompt building inside asyncio.gather,
+    which blocks the event loop and prevents timeouts from firing.
+    """
+    try:
+        raw = await asyncio.wait_for(
+            llm_client.agenerate(
+                prompt=triage_prompt,
+                system=THREAD_FULL_SYSTEM,
+                model=model_id,
+                temperature=0.1,
+                max_tokens=max_output,
+                format_json=True,
+                cache_system=True,
+                on_status=on_status,
+            ),
+            timeout=ASYNC_CALL_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Thread triage timed out after %ds for %s", ASYNC_CALL_TIMEOUT, thread_id[:30])
+        raw = None
+
+    event_ids = [e["id"] for e in thread_events]
+    result = parse_thread_triage_response(
+        raw or "", thread_id, event_ids,
+        strategy=TriageStrategy.THREAD_FULL,
+        model_id=model_id,
+    )
+    return thread_id, result
+
+
 def run_triage(
     store: LayeredGraphStore,
     llm_client: LLMClient,
@@ -2506,13 +2547,94 @@ def run_triage(
             _print_slots(force=(_done % 10 == 0 or _done == _total_threads))
             return result
 
+        async def _safe_triage_thread_prebuilt(tid, tevts, triage_prompt, model_id, max_output):
+            """Like _safe_triage_thread but with pre-built prompt (no sync blocking)."""
+            nonlocal _done, _failed, _timed_out
+            label = tid[:40]
+            n = len(tevts)
+            _slots[label] = {"status": "queued", "n_msgs": n, "t_start": time.time()}
+
+            def on_status(status):
+                if label in _slots:
+                    _slots[label]["status"] = status
+                    if status == "calling_gemini":
+                        _slots[label]["t_gemini"] = time.time()
+                    _print_slots()
+
+            try:
+                result = await asyncio.wait_for(
+                    _async_triage_call_only(
+                        tid, tevts, triage_prompt, model_id, max_output,
+                        llm_client, on_status,
+                    ),
+                    timeout=THREAD_TIMEOUT,
+                )
+                if result[1] is None:
+                    _failed += 1
+            except asyncio.TimeoutError:
+                logger.error("Thread %s (%d msgs) timed out after %ds — skipping", label, n, THREAD_TIMEOUT)
+                _timed_out += 1
+                result = (tid, None)
+
+            _slots.pop(label, None)
+            _done += 1
+            _print_slots(force=(_done % 10 == 0 or _done == _total_threads))
+            return result
+
         async def _run_all() -> list[tuple[str, ThreadTriageResult | None]]:
-            tasks = []
-            for tid, tevts in full_threads:
+            # Build all prompts BEFORE dispatching async API calls.
+            # Prompt building is synchronous (SQLite reads, string ops,
+            # thread compaction) and blocks the event loop.  If we let
+            # asyncio.gather start all 184 coroutines at once, prompts
+            # are built back-to-back while API responses and wait_for
+            # timeouts can't fire — causing the pipeline to hang.
+            prebuilt: list[tuple[str, list[dict], str, str, int]] = []
+            _build_t0 = time.time()
+            for i, (tid, tevts) in enumerate(full_threads):
                 prior = thread_prior_ctx.get(tid)
                 all_evts = thread_all_events.get(tid)
+                n_msgs = len(tevts)
+                model_id, max_output = _model_for_thread(tid, n_msgs)
+
+                _pt0 = time.time()
+                if prior is not None and all_evts is not None:
+                    new_ids = {e["id"] for e in tevts}
+                    triaged_ids = {e["id"] for e in all_evts if e["id"] not in new_ids}
+                    triage_prompt = build_incremental_thread_prompt(
+                        tid, all_evts, triaged_ids,
+                        prior, store, sender_cache, now,
+                        profile_context,
+                    )
+                else:
+                    triage_prompt = build_thread_full_prompt(
+                        tid, tevts, store, sender_cache, now,
+                        profile_context,
+                    )
+                _pt_elapsed = time.time() - _pt0
+                if _pt_elapsed > 1.0 or len(triage_prompt) > 100_000:
+                    print(
+                        f"  prompt {i+1}/{len(full_threads)}: "
+                        f"{tid[:30]} {n_msgs}msgs {len(triage_prompt):,}chars "
+                        f"{_pt_elapsed:.1f}s",
+                        flush=True,
+                    )
+                prebuilt.append((tid, tevts, triage_prompt, model_id, max_output))
+                # Yield to event loop periodically so it stays responsive
+                await asyncio.sleep(0)
+
+            _build_elapsed = time.time() - _build_t0
+            print(
+                f"  All {len(prebuilt)} prompts built in {_build_elapsed:.1f}s, "
+                f"dispatching API calls...",
+                flush=True,
+            )
+
+            tasks = []
+            for tid, tevts, triage_prompt, model_id, max_output in prebuilt:
                 tasks.append(
-                    _safe_triage_thread(tid, tevts, prior, all_evts)
+                    _safe_triage_thread_prebuilt(
+                        tid, tevts, triage_prompt, model_id, max_output,
+                    )
                 )
             return await asyncio.gather(*tasks, return_exceptions=False)
 
